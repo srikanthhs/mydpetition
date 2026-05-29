@@ -1,13 +1,11 @@
 'use client';
 import { useState, useCallback, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/context/AuthContext';
 import { GrievanceRow, AuditResult, PreStats } from '@/lib/types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, PieChart, Pie, Legend,
+  ResponsiveContainer, Cell,
 } from 'recharts';
-import { Upload, LogOut, Download, Play, Shield, AlertCircle, FileSpreadsheet, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { Upload, Download, Play, Shield, AlertCircle, FileSpreadsheet, CheckCircle2, Clock, XCircle, Loader2 } from 'lucide-react';
 
 /* ── helpers ── */
 function getOfficerReply(row: GrievanceRow): string {
@@ -27,41 +25,52 @@ const STATUS_COLORS: Record<string, string> = {
 const GRADE_COLORS: Record<string, string> = { A: '#22c55e', C: '#f59e0b', F: '#ef4444' };
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth();
-  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [rows, setRows] = useState<GrievanceRow[]>([]);
   const [results, setResults] = useState<AuditResult[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [parsing, setParsing] = useState(false);
   const [processed, setProcessed] = useState(0);
   const [apiKey, setApiKey] = useState('');
   const [fileError, setFileError] = useState('');
   const [fileName, setFileName] = useState('');
   const [activeTab, setActiveTab] = useState<'overview' | 'results'>('overview');
 
-  const handleSignOut = async () => { await signOut(); router.push('/'); };
-
   /* ── File parsing ── */
   const parseFile = useCallback(async (file: File) => {
-    setFileError(''); setRows([]); setResults([]); setFileName(file.name);
+    setFileError(''); setRows([]); setResults([]); setFileName(file.name); setParsing(true);
     try {
-      const buffer = await file.arrayBuffer();
+      // Use FileReader for maximum browser compatibility
+      const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target?.result as ArrayBuffer);
+        reader.onerror = () => reject(new Error('FileReader failed'));
+        reader.readAsArrayBuffer(file);
+      });
+
       const XLSX = await import('xlsx');
-      const wb = XLSX.read(buffer, { type: 'array' });
+      const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
+      const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
 
-      if (!data.length) { setFileError('File is empty.'); return; }
+      if (!data.length) { setFileError('File is empty or could not be parsed.'); return; }
 
+      // Show what columns were found for debugging
+      const cols = Object.keys(data[0]);
       const required = ['Grievance ID', 'Petition Details', 'Department Name', 'Status Display'];
-      const missing = required.filter(c => !(c in data[0]));
-      if (missing.length) { setFileError(`Missing columns: ${missing.join(', ')}`); return; }
+      const missing = required.filter(c => !cols.includes(c));
+      if (missing.length) {
+        setFileError(`Missing columns: ${missing.join(', ')}. Found: ${cols.slice(0,6).join(', ')}...`);
+        return;
+      }
 
       setRows(data as GrievanceRow[]);
       setActiveTab('overview');
     } catch (e) {
       setFileError(`Failed to read file: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setParsing(false);
     }
   }, []);
 
@@ -206,17 +215,10 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {user?.photoURL && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.photoURL} alt="avatar" className="w-8 h-8 rounded-full ring-2 ring-indigo-100" />
-          )}
-          <div className="hidden sm:block text-right">
-            <p className="text-xs font-medium text-slate-700">{user?.displayName}</p>
-            <p className="text-xs text-slate-400">{user?.email}</p>
-          </div>
-          <button onClick={handleSignOut} className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg px-2.5 py-1.5 hover:bg-slate-50 transition-colors">
-            <LogOut size={13} /> Sign Out
-          </button>
+          <span className="text-xs text-slate-400 hidden sm:inline">Mayiladuthurai Collectorate</span>
+          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-xs font-medium px-2.5 py-1 rounded-full border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Live
+          </span>
         </div>
       </header>
 
@@ -232,15 +234,25 @@ export default function Dashboard() {
               Upload CM Helpline Export (.xlsx)
             </h2>
             <div
-              className="border-2 border-dashed border-slate-200 rounded-xl p-7 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/20 transition-all"
-              onClick={() => fileInputRef.current?.click()}
-              onDrop={e => { e.preventDefault(); e.dataTransfer.files[0] && parseFile(e.dataTransfer.files[0]); }}
+              className={`border-2 border-dashed rounded-xl p-7 text-center transition-all ${parsing ? 'border-indigo-300 bg-indigo-50/30 cursor-wait' : 'border-slate-200 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/20'}`}
+              onClick={() => !parsing && fileInputRef.current?.click()}
+              onDrop={e => { e.preventDefault(); if (!parsing) { e.dataTransfer.files[0] && parseFile(e.dataTransfer.files[0]); }}}
               onDragOver={e => e.preventDefault()}
             >
-              <Upload className="mx-auto text-slate-300 mb-2" size={36} />
-              <p className="text-slate-600 font-medium text-sm">Drop your grievances Excel file here</p>
-              <p className="text-slate-400 text-xs mt-1">Supports .xlsx format from CM Helpline portal</p>
-              <input ref={fileInputRef} type="file" accept=".xlsx,.csv" className="hidden"
+              {parsing ? (
+                <>
+                  <Loader2 className="mx-auto text-indigo-500 mb-2 animate-spin" size={36} />
+                  <p className="text-indigo-600 font-medium text-sm">Reading Excel file…</p>
+                  <p className="text-slate-400 text-xs mt-1">Parsing {fileName}</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="mx-auto text-slate-300 mb-2" size={36} />
+                  <p className="text-slate-600 font-medium text-sm">Drop your grievances Excel file here</p>
+                  <p className="text-slate-400 text-xs mt-1">Supports .xlsx format from CM Helpline portal</p>
+                </>
+              )}
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
                 onChange={e => e.target.files?.[0] && parseFile(e.target.files[0])} />
             </div>
             {fileError && (
