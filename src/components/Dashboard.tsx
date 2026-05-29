@@ -1,11 +1,40 @@
 'use client';
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { GrievanceRow, AuditResult, PreStats } from '@/lib/types';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from 'recharts';
 import { Upload, Download, Play, Shield, AlertCircle, FileSpreadsheet, CheckCircle2, Clock, XCircle, Loader2 } from 'lucide-react';
+
+/* ── Storage keys ── */
+const STORAGE_ROWS    = 'myd_rows_v1';
+const STORAGE_RESULTS = 'myd_results_v1';
+const STORAGE_FILE    = 'myd_filename_v1';
+
+/* ── Only save the columns the app actually uses (keeps storage small) ── */
+const SLIM_COLS = [
+  'Grievance ID','Petitioner','Department Name',
+  'Sub Department/குறை தொடர்புடைய துணைத்துறை',
+  'Responsible Officer/பொறுப்பு அதிகாரி',
+  'Petition Details','Reason for Acceptance','Reason for Rejection',
+  'Status Display','Taluk/வட்டம்',
+  'Grievance Type/குறையின் வகை',
+  'Ticket Age in Days','Days of Pending',
+] as const;
+
+function slimRow(row: GrievanceRow): GrievanceRow {
+  const out: Record<string, unknown> = {};
+  SLIM_COLS.forEach(k => { out[k] = row[k] ?? ''; });
+  return out as GrievanceRow;
+}
+
+function saveToStorage(key: string, data: unknown) {
+  try { sessionStorage.setItem(key, JSON.stringify(data)); } catch { /* quota */ }
+}
+function loadFromStorage<T>(key: string): T | null {
+  try { const v = sessionStorage.getItem(key); return v ? JSON.parse(v) as T : null; } catch { return null; }
+}
 
 /* ── helpers ── */
 function getOfficerReply(row: GrievanceRow): string {
@@ -37,6 +66,30 @@ export default function Dashboard() {
   const [fileName, setFileName] = useState('');
   const [activeTab, setActiveTab] = useState<'overview' | 'results'>('overview');
 
+  /* ── Restore from sessionStorage on first load ── */
+  useEffect(() => {
+    const savedRows    = loadFromStorage<GrievanceRow[]>(STORAGE_ROWS);
+    const savedResults = loadFromStorage<AuditResult[]>(STORAGE_RESULTS);
+    const savedFile    = loadFromStorage<string>(STORAGE_FILE);
+    if (savedRows?.length)    { setRows(savedRows); setActiveTab('overview'); }
+    if (savedResults?.length) { setResults(savedResults); setActiveTab('results'); }
+    if (savedFile)            { setFileName(savedFile); }
+  }, []);
+
+  /* ── Persist whenever data changes ── */
+  useEffect(() => { if (rows.length)    saveToStorage(STORAGE_ROWS, rows); },    [rows]);
+  useEffect(() => { if (results.length) saveToStorage(STORAGE_RESULTS, results); }, [results]);
+  useEffect(() => { if (fileName)       saveToStorage(STORAGE_FILE, fileName); }, [fileName]);
+
+  /* ── Clear stored data ── */
+  const clearData = useCallback(() => {
+    sessionStorage.removeItem(STORAGE_ROWS);
+    sessionStorage.removeItem(STORAGE_RESULTS);
+    sessionStorage.removeItem(STORAGE_FILE);
+    setRows([]); setResults([]); setFileName(''); setFileError('');
+    setActiveTab('overview');
+  }, []);
+
   /* ── File parsing ── */
   const parseFile = useCallback(async (file: File) => {
     setFileError(''); setRows([]); setResults([]); setFileName(file.name); setParsing(true);
@@ -65,7 +118,9 @@ export default function Dashboard() {
         return;
       }
 
-      setRows(data as GrievanceRow[]);
+      const slim = (data as GrievanceRow[]).map(slimRow);
+      setRows(slim);
+      setResults([]);
       setActiveTab('overview');
     } catch (e) {
       setFileError(`Failed to read file: ${e instanceof Error ? e.message : 'Unknown error'}`);
@@ -261,10 +316,16 @@ export default function Dashboard() {
               </div>
             )}
             {rows.length > 0 && !fileError && (
-              <div className="mt-3 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-4 py-2 rounded-lg">
-                <CheckCircle2 size={14} />
-                <span className="font-medium">{fileName}</span>
-                <span className="text-emerald-600">— {rows.length.toLocaleString()} grievances loaded</span>
+              <div className="mt-3 flex items-center justify-between text-sm text-emerald-700 bg-emerald-50 px-4 py-2 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={14} />
+                  <span className="font-medium truncate max-w-xs">{fileName}</span>
+                  <span className="text-emerald-600">— {rows.length.toLocaleString()} grievances loaded</span>
+                </div>
+                <button onClick={clearData}
+                  className="text-xs text-red-500 hover:text-red-700 border border-red-200 rounded-md px-2 py-0.5 hover:bg-red-50 transition-colors ml-3 whitespace-nowrap">
+                  ✕ Clear &amp; Upload New
+                </button>
               </div>
             )}
           </div>
