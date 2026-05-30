@@ -22,8 +22,17 @@ const SK_ROWS    = 'myd_rows_v4';
 const SK_RESULTS = 'myd_results_v4';
 const SK_META    = 'myd_meta_v4';
 
+/* Migrate older keys → v4 (never delete without migrating) */
 if (typeof window !== 'undefined') {
-  ['myd_rows_v3','myd_results_v3','myd_meta_v3'].forEach(k => localStorage.removeItem(k));
+  for (const [old, cur] of [
+    ['myd_rows_v3', SK_ROWS], ['myd_results_v3', SK_RESULTS], ['myd_meta_v3', SK_META],
+    ['myd_rows_v2', SK_ROWS], ['myd_results_v2', SK_RESULTS],
+  ] as [string,string][]) {
+    const existing = localStorage.getItem(cur);
+    const oldData  = localStorage.getItem(old);
+    if (!existing && oldData) localStorage.setItem(cur, oldData);   // migrate
+    if (oldData) localStorage.removeItem(old);                       // then purge old
+  }
 }
 
 const SLIM_COLS = [
@@ -122,9 +131,10 @@ export default function Dashboard() {
   const [reportOfficer, setReportOfficer] = useState<string|null>(null);
   const [reportSearch,  setReportSearch]  = useState('');
 
-  /* ── Restore from Firestore on mount ── */
+  /* ── Restore on mount: localStorage first (instant), then Firestore (authoritative) ── */
   useEffect(() => {
     async function restore() {
+      /* Step 1: show localStorage data immediately */
       const r  = lsLoad<GrievanceRow[]>(SK_ROWS);
       const rs = lsLoad<AuditResult[]>(SK_RESULTS);
       const m  = lsLoad<{file:string;savedAt:string}>(SK_META);
@@ -132,14 +142,19 @@ export default function Dashboard() {
       if (rs?.length) { setResults(rs); setSection('insights'); }
       if (m) { setFileName(m.file); setSavedAt(m.savedAt); }
 
+      /* Step 2: load from Firestore — always preferred over localStorage */
       try {
         const { meta, rows: fr, results: frs } = await fsLoad();
-        if (fr.length > (r?.length ?? 0)) {
-          setRows(fr); lsSave(SK_ROWS, fr);
-          setSection(frs.length ? 'insights' : 'overview');
+
+        /* Use Firestore data if it has ANY rows (it is the authoritative source) */
+        if (fr.length > 0) {
+          setRows(fr);
+          lsSave(SK_ROWS, fr);
+          setSection(frs.length > 0 ? 'insights' : 'overview');
         }
-        if (frs.length > (rs?.length ?? 0)) {
-          setResults(frs); lsSave(SK_RESULTS, frs.map(slimResult));
+        if (frs.length > 0) {
+          setResults(frs);
+          lsSave(SK_RESULTS, frs.map(slimResult));
           setSection('insights');
         }
         if (meta) {
@@ -148,11 +163,19 @@ export default function Dashboard() {
           setSavedAt(ts);
           lsSave(SK_META, { file: meta.fileName, savedAt: ts });
         }
-        // Load gemini key from Firestore
+
+        /* Load saved Gemini key */
         const key = await fsLoadGeminiKey();
         if (key) setApiKey(key);
-      } catch { /* offline */ }
-      finally { setLoading(false); }
+
+        setCloudStatus('saved');
+      } catch (e) {
+        console.error('Firestore restore failed:', e);
+        /* Firestore unavailable — localStorage data (step 1) is already shown */
+        setCloudStatus('error');
+      } finally {
+        setLoading(false);
+      }
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -548,7 +571,8 @@ export default function Dashboard() {
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
       <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"/>
-      <p className="text-sm text-slate-500">Loading saved data from Firebase…</p>
+      <p className="text-sm text-slate-600 font-medium">Restoring your data…</p>
+      <p className="text-xs text-slate-400">Checking Firebase for saved grievances &amp; audit results</p>
     </div>
   );
 
@@ -610,7 +634,7 @@ export default function Dashboard() {
           {(cloudStatus === 'error' || saveErr) && (
             <div className="flex items-start gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 leading-tight">
               <AlertCircle size={11} className="mt-0.5 shrink-0"/>
-              <span>Cloud save failed. Export CSV as backup.</span>
+              <span>Firebase not reachable. <a href="https://console.firebase.google.com/project/mydpetition/firestore" target="_blank" rel="noreferrer" className="underline font-semibold">Enable Firestore</a> or export CSV.</span>
             </div>
           )}
           {savedAt && cloudStatus !== 'saving' && (
