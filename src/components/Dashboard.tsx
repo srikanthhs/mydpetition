@@ -1,6 +1,7 @@
 'use client';
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { GrievanceRow, AuditResult, PreStats } from '@/lib/types';
+import { fsSaveRows, fsSaveResults, fsLoad, fsClear } from '@/lib/store';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, PieChart, Pie, Legend,
@@ -100,50 +101,83 @@ export default function Dashboard() {
   const [apiKey,     setApiKey]     = useState('');
   const [fileErr,    setFileErr]    = useState('');
   const [fileName,   setFileName]   = useState('');
-  const [savedAt,    setSavedAt]    = useState<string|null>(null);
-  const [saveErr,    setSaveErr]    = useState(false);
-  const [section,    setSection]    = useState<Section>('upload');
+  const [savedAt,     setSavedAt]     = useState<string|null>(null);
+  const [saveErr,     setSaveErr]     = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<'idle'|'saving'|'saved'|'error'>('idle');
+  const [loading,     setLoading]     = useState(true);   // initial Firestore fetch
+  const [section,     setSection]     = useState<Section>('upload');
 
-  /* ── Restore from localStorage on mount ── */
+  /* ── Restore from Firestore on mount (localStorage as fast fallback) ── */
   useEffect(() => {
-    const r  = lsLoad<GrievanceRow[]>(SK_ROWS);
-    const rs = lsLoad<AuditResult[]>(SK_RESULTS);
-    const m  = lsLoad<{file:string;savedAt:string}>(SK_META);
-    if (r?.length)  { setRows(r);  setSection('overview'); }
-    if (rs?.length) { setResults(rs); setSection('insights'); }
-    if (m) { setFileName(m.file); setSavedAt(m.savedAt); }
+    async function restore() {
+      // 1. Try localStorage first for instant load
+      const r  = lsLoad<GrievanceRow[]>(SK_ROWS);
+      const rs = lsLoad<AuditResult[]>(SK_RESULTS);
+      const m  = lsLoad<{file:string;savedAt:string}>(SK_META);
+      if (r?.length)  { setRows(r);  setSection('overview'); }
+      if (rs?.length) { setResults(rs); setSection('insights'); }
+      if (m) { setFileName(m.file); setSavedAt(m.savedAt); }
+
+      // 2. Then load from Firestore (authoritative source)
+      try {
+        const { meta, rows: fr, results: frs } = await fsLoad();
+        if (fr.length > (r?.length ?? 0)) {
+          setRows(fr); lsSave(SK_ROWS, fr);
+          setSection(frs.length ? 'insights' : 'overview');
+        }
+        if (frs.length > (rs?.length ?? 0)) {
+          setResults(frs); lsSave(SK_RESULTS, frs.map(slimResult));
+          setSection('insights');
+        }
+        if (meta) {
+          setFileName(meta.fileName);
+          const ts = new Date(meta.savedAt).toLocaleString('en-IN');
+          setSavedAt(ts);
+          lsSave(SK_META, { file: meta.fileName, savedAt: ts });
+        }
+      } catch { /* network offline — localStorage data already shown */ }
+      finally { setLoading(false); }
+    }
+    restore();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Save rows to Firestore + localStorage ── */
+  const saveRows = useCallback(async (newRows: GrievanceRow[], fname: string) => {
+    // localStorage immediately
+    const ok = lsSave(SK_ROWS, newRows);
+    setSaveErr(!ok);
+    const ts = new Date().toLocaleString('en-IN');
+    setSavedAt(ts);
+    lsSave(SK_META, { file: fname, savedAt: ts });
+
+    // Firestore in background
+    setCloudStatus('saving');
+    const cloudOk = await fsSaveRows(newRows, fname);
+    setCloudStatus(cloudOk ? 'saved' : 'error');
+    if (!cloudOk) setSaveErr(true);
   }, []);
 
-  /* ── Persist rows ── */
-  useEffect(() => {
-    if (!rows.length) return;
-    const ok = lsSave(SK_ROWS, rows);
-    setSaveErr(!ok);
-    if (ok) {
-      const ts = new Date().toLocaleString('en-IN');
-      setSavedAt(ts);
-      lsSave(SK_META, { file: fileName, savedAt: ts });
-    }
-  }, [rows, fileName]);
-
-  /* ── Persist results (only when not mid-audit to avoid 1927 writes) ── */
-  const saveResultsNow = useCallback((list: AuditResult[], fname: string) => {
+  /* ── Save results to Firestore + localStorage (called once on audit complete) ── */
+  const saveResultsNow = useCallback(async (list: AuditResult[], fname: string) => {
     const slim = list.map(slimResult);
     const ok = lsSave(SK_RESULTS, slim);
     setSaveErr(!ok);
-    if (ok) {
-      const ts = new Date().toLocaleString('en-IN');
-      setSavedAt(ts);
-      lsSave(SK_META, { file: fname, savedAt: ts });
-    }
-    return ok;
+    const ts = new Date().toLocaleString('en-IN');
+    setSavedAt(ts);
+    lsSave(SK_META, { file: fname, savedAt: ts });
+
+    setCloudStatus('saving');
+    const cloudOk = await fsSaveResults(list, fname);
+    setCloudStatus(cloudOk ? 'saved' : 'error');
+    if (!cloudOk) setSaveErr(true);
   }, []);
 
   /* ── Clear everything ── */
-  const clearAll = useCallback(() => {
+  const clearAll = useCallback(async () => {
     [SK_ROWS, SK_RESULTS, SK_META].forEach(k => localStorage.removeItem(k));
     setRows([]); setResults([]); setFileName(''); setFileErr('');
-    setSavedAt(null); setSection('upload');
+    setSavedAt(null); setSaveErr(false); setCloudStatus('idle'); setSection('upload');
+    await fsClear();
   }, []);
 
   /* ── Parse file ── */
@@ -167,10 +201,11 @@ export default function Dashboard() {
       if (miss.length) { setFileErr(`Missing columns: ${miss.join(', ')}`); return; }
       const slim = (data as GrievanceRow[]).map(slimRow);
       setRows(slim); setResults([]); setSection('overview');
+      await saveRows(slim, file.name);
     } catch (e) {
       setFileErr(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
     } finally { setParsing(false); }
-  }, []);
+  }, [saveRows]);
 
   /* ── Run audit ── */
   const startAudit = useCallback(async () => {
@@ -378,6 +413,14 @@ export default function Dashboard() {
   /* ══════════════════════════════════════════════
      RENDER
   ══════════════════════════════════════════════ */
+  /* ── Initial loading screen while Firestore fetches ── */
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
+      <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"/>
+      <p className="text-sm text-slate-500">Loading saved data from Firebase…</p>
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen bg-slate-50">
 
@@ -421,16 +464,28 @@ export default function Dashboard() {
 
         {/* Footer */}
         <div className="px-4 py-4 border-t border-slate-100 space-y-2">
-          {saveErr ? (
+          {/* Cloud sync status */}
+          {cloudStatus === 'saving' && (
+            <div className="flex items-center gap-1.5 text-xs text-indigo-600">
+              <Loader2 size={11} className="animate-spin"/> Syncing to Firebase…
+            </div>
+          )}
+          {cloudStatus === 'saved' && !saveErr && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+              <CheckCircle2 size={11}/> Firebase saved
+            </div>
+          )}
+          {cloudStatus === 'error' || saveErr ? (
             <div className="flex items-start gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 leading-tight">
               <AlertCircle size={11} className="mt-0.5 shrink-0"/>
-              <span>Storage full — data <strong>not saved</strong>. Export CSV now.</span>
-            </div>
-          ) : savedAt ? (
-            <div className="flex items-center gap-1.5 text-xs text-emerald-600">
-              <CheckCircle2 size={11}/> Saved {savedAt}
+              <span>Cloud save failed. Export CSV as backup.</span>
             </div>
           ) : null}
+          {savedAt && cloudStatus !== 'saving' && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <Save size={10}/> {savedAt}
+            </div>
+          )}
           {rows.length > 0 && (
             <button onClick={clearAll}
               className="w-full flex items-center gap-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg transition-colors">
