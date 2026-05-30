@@ -2,12 +2,13 @@
  * Firestore persistence for MYD Grievance Audit
  *
  * Structure:
- *   sessions/{deviceId}                    ← metadata doc
- *   sessions/{deviceId}/rowChunks/{n}      ← 200 rows per doc
- *   sessions/{deviceId}/resultChunks/{n}   ← 200 results per doc
+ *   sessions/{sessionId}                    ← metadata doc
+ *   sessions/{sessionId}/rowChunks/{n}      ← 200 rows per doc
+ *   sessions/{sessionId}/resultChunks/{n}   ← 200 results per doc
  *
- * Each device gets its own session keyed by a random ID stored in localStorage.
- * No auth required — Firestore rules must allow open read/write (set below).
+ * All devices in the same organisation share a single session key so data
+ * uploaded on one device is immediately visible to every other device.
+ * No auth required — Firestore rules must allow open read/write.
  */
 
 import {
@@ -19,15 +20,16 @@ import type { GrievanceRow, AuditResult } from './types';
 
 const CHUNK = 200; // rows per Firestore document (well under 1 MB limit)
 
-/* ── Device ID (persisted in localStorage) ── */
+/* ── Shared organisation session key ──
+ *
+ * All staff share this single key so any device can read the latest audit.
+ * Change this string if you ever want to start a completely fresh session
+ * (e.g. new financial year), or add a UI picker later.
+ */
+const SHARED_SESSION = 'myd-mayiladuthurai-collectorate';
+
 export function getDeviceId(): string {
-  if (typeof window === 'undefined') return 'ssr';
-  let id = localStorage.getItem('myd_device_id');
-  if (!id) {
-    id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    localStorage.setItem('myd_device_id', id);
-  }
-  return id;
+  return SHARED_SESSION;
 }
 
 /* ── Metadata ── */
