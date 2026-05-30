@@ -43,6 +43,7 @@ const SLIM_COLS = [
   'Status Display','Taluk/வட்டம்',
   'Grievance Type/குறையின் வகை',
   'Ticket Age in Days','Days of Pending',
+  'Mobile Number','Petitioner Mobile','Mobile No',
 ] as const;
 
 function slimRow(r: GrievanceRow): GrievanceRow {
@@ -73,6 +74,9 @@ function lsLoad<T>(k: string): T | null {
 ══════════════════════════════════════════════ */
 function getReply(r: GrievanceRow) {
   return String(r['Reason for Acceptance'] || r['Reason for Rejection'] || '').trim();
+}
+function getMobile(r: GrievanceRow) {
+  return String(r['Mobile Number'] || r['Petitioner Mobile'] || r['Mobile No'] || '').trim();
 }
 function shortDept(d: string) {
   return (d || '').replace(' Department','').replace(' and ',' & ').replace('Administration','Admin').slice(0,30);
@@ -1054,6 +1058,9 @@ export default function Dashboard() {
                                       <div className="flex items-center justify-between">
                                         <p className="font-semibold text-indigo-800 text-sm">
                                           {String(r['Grievance ID'])} — {String(r['Petitioner']||'')}
+                                          {getMobile(r) && (
+                                            <a href={`tel:${getMobile(r)}`} className="ml-3 text-indigo-500 hover:underline font-mono font-normal text-xs">📞 {getMobile(r)}</a>
+                                          )}
                                         </p>
                                         <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-white font-bold text-sm ${
                                           r.Audit_Grade==='A'?'bg-emerald-500':r.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
@@ -1580,7 +1587,7 @@ export default function Dashboard() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-red-50 text-red-700 uppercase tracking-wide">
-                          {['Grievance ID','Petitioner','Department','Officer','Taluk','Age','Request Made','Reply Given','Required Action (Tamil)'].map(h=>(
+                          {['Grievance ID','Petitioner','Mobile','Department','Officer','Taluk','Age','Request Made','Reply Given','Required Action (Tamil)'].map(h=>(
                             <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -1590,6 +1597,11 @@ export default function Dashboard() {
                           <tr key={i} className="hover:bg-red-50/30">
                             <td className="px-3 py-2 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
                             <td className="px-3 py-2 text-slate-700">{String(r['Petitioner']||'').slice(0,16)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {getMobile(r)
+                                ? <a href={`tel:${getMobile(r)}`} className="text-indigo-600 hover:underline font-mono text-xs">{getMobile(r)}</a>
+                                : <span className="text-slate-300 text-xs">—</span>}
+                            </td>
                             <td className="px-3 py-2 text-slate-600">{shortDept(String(r['Department Name']||''))}</td>
                             <td className="px-3 py-2 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,18)}</td>
                             <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
@@ -1630,7 +1642,7 @@ export default function Dashboard() {
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide sticky top-0">
-                              {['ID','Petitioner','Taluk','Age','Grade','Status','Request Made','Reply Given','AI Analysis','Tamil Correction'].map(h=>(
+                              {['ID','Petitioner','Mobile','Taluk','Age','Grade','Status','Request Made','Reply Given','AI Analysis','Tamil Correction'].map(h=>(
                                 <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
                               ))}
                             </tr>
@@ -1640,6 +1652,11 @@ export default function Dashboard() {
                               <tr key={i} className={`hover:bg-slate-50 ${c.Audit_Grade==='F'?'bg-red-50/30':''}`}>
                                 <td className="px-3 py-2.5 font-mono text-slate-500 whitespace-nowrap">{String(c['Grievance ID']).slice(-10)}</td>
                                 <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{String(c['Petitioner']||'').slice(0,16)}</td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  {getMobile(c)
+                                    ? <a href={`tel:${getMobile(c)}`} className="text-indigo-600 hover:underline font-mono text-xs">{getMobile(c)}</a>
+                                    : <span className="text-slate-300 text-xs">—</span>}
+                                </td>
                                 <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(c['Taluk/வட்டம்']||''))}</td>
                                 <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
                                 <td className="px-3 py-2.5">

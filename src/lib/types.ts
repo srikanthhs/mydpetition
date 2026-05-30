@@ -12,6 +12,9 @@ export interface GrievanceRow {
   'Grievance Type/குறையின் வகை'?: string;
   'Ticket Age in Days'?: number;
   'Days of Pending'?: number;
+  'Mobile Number'?: string;
+  'Petitioner Mobile'?: string;
+  'Mobile No'?: string;
   [key: string]: unknown;
 }
 
