@@ -142,36 +142,50 @@ export default function Dashboard() {
       if (rs?.length) { setResults(rs); setSection('insights'); }
       if (m) { setFileName(m.file); setSavedAt(m.savedAt); }
 
-      /* Step 2: load from Firestore — always preferred over localStorage */
+      /* Step 2: sync with Firestore */
       try {
         const { meta, rows: fr, results: frs } = await fsLoad();
 
-        /* Use Firestore data if it has ANY rows (it is the authoritative source) */
         if (fr.length > 0) {
+          /* Firestore has data — it is the authoritative source */
           setRows(fr);
           lsSave(SK_ROWS, fr);
           setSection(frs.length > 0 ? 'insights' : 'overview');
+        } else if (r?.length) {
+          /* Firestore is empty but localStorage has rows →
+             push localStorage data up to Firestore automatically (no re-upload needed) */
+          setCloudStatus('saving');
+          const fname = m?.file || 'grievances.xlsx';
+          await fsSaveRows(r, fname);
+          if (rs?.length) await fsSaveResults(rs, fname);
         }
+
         if (frs.length > 0) {
           setResults(frs);
           lsSave(SK_RESULTS, frs.map(slimResult));
           setSection('insights');
+        } else if (rs?.length && fr.length === 0) {
+          /* results were already pushed above with rows */
         }
+
         if (meta) {
           setFileName(meta.fileName);
           const ts = new Date(meta.savedAt).toLocaleString('en-IN');
           setSavedAt(ts);
           lsSave(SK_META, { file: meta.fileName, savedAt: ts });
+        } else if (m) {
+          /* Firestore had no meta but localStorage did — use localStorage meta */
+          setFileName(m.file);
+          setSavedAt(m.savedAt);
         }
 
         /* Load saved Gemini key */
-        const key = await fsLoadGeminiKey();
-        if (key) setApiKey(key);
+        const savedKey = await fsLoadGeminiKey();
+        if (savedKey) setApiKey(savedKey);
 
         setCloudStatus('saved');
       } catch (e) {
         console.error('Firestore restore failed:', e);
-        /* Firestore unavailable — localStorage data (step 1) is already shown */
         setCloudStatus('error');
       } finally {
         setLoading(false);
@@ -179,6 +193,21 @@ export default function Dashboard() {
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Auto-sync: whenever results change after initial load, save to Firestore ── */
+  const syncedRef = useRef(false);   // true once initial restore is done
+  useEffect(() => {
+    if (!syncedRef.current) { syncedRef.current = true; return; } // skip on mount
+    if (!results.length || !fileName) return;
+    // debounce 3 s so rapid re-audit clicks don't hammer Firestore
+    const t = setTimeout(async () => {
+      lsSave(SK_RESULTS, results.map(slimResult));
+      await fsSaveResults(results, fileName);
+      setSavedAt(new Date().toLocaleString('en-IN'));
+      setCloudStatus('saved');
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [results, fileName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveRows = useCallback(async (newRows: GrievanceRow[], fname: string) => {
     const ok = lsSave(SK_ROWS, newRows);
