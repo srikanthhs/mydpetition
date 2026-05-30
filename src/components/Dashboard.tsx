@@ -1618,76 +1618,83 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* Officer Detail Modal */}
+              {/* Officer Full-Page Detail View (replaces report when officer selected) */}
               {reportOfficer && (() => {
                 const officer = officerReportData.find(o=>o.name===reportOfficer);
                 if (!officer) return null;
                 return (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 no-print" onClick={()=>setReportOfficer(null)}>
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col mx-4" onClick={e=>e.stopPropagation()}>
-                      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <div className="space-y-4">
+                    {/* Header bar */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-6 py-4 flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <button onClick={()=>setReportOfficer(null)}
+                          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors">
+                          <ChevronRight size={14} className="rotate-180"/> Back to Reports
+                        </button>
+                        <div className="w-px h-6 bg-slate-200"/>
                         <div>
-                          <p className="font-bold text-slate-800">{officer.name}</p>
-                          <p className="text-xs text-slate-400">{officer.total} cases · {100-officer.failRate}% pass rate · A:{officer.A} C:{officer.C} F:{officer.F}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button onClick={()=>window.print()}
-                            className="flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors text-slate-700">
-                            <Printer size={13}/> Print
-                          </button>
-                          <button onClick={()=>setReportOfficer(null)} className="text-slate-400 hover:text-slate-700 p-1"><X size={18}/></button>
+                          <p className="font-bold text-slate-800 text-base">{officer.name}</p>
+                          <p className="text-xs text-slate-400">{officer.total} cases · {100-officer.failRate}% pass rate</p>
                         </div>
                       </div>
-                      <div className="overflow-auto flex-1 px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        {/* Grade summary chips */}
+                        <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full">A: {officer.A}</span>
+                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1 rounded-full">C: {officer.C}</span>
+                        <span className="bg-red-100 text-red-700 text-xs font-bold px-3 py-1 rounded-full">F: {officer.F}</span>
+                        <button onClick={()=>window.print()}
+                          className="flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors text-slate-700 ml-2">
+                          <Printer size={13}/> Print
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Full-width table */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead>
-                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide sticky top-0">
+                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide border-b border-slate-200">
                               {['ID','Petitioner','Mobile','Taluk','Age','Grade','Status','Request Made','Reply Given','AI Analysis','Tamil Correction'].map(h=>(
-                                <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                                <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {officer.cases.map((c,i)=>(
-                              <tr key={i} className={`hover:bg-slate-50 ${c.Audit_Grade==='F'?'bg-red-50/30':''}`}>
-                                <td className="px-3 py-2.5 font-mono text-slate-500 whitespace-nowrap">{String(c['Grievance ID']).slice(-10)}</td>
-                                <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{String(c['Petitioner']||'').slice(0,16)}</td>
-                                <td className="px-3 py-2.5 whitespace-nowrap">
+                              <tr key={i} className={`${c.Audit_Grade==='F'?'bg-red-50/40':'hover:bg-slate-50'}`}>
+                                <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">{String(c['Grievance ID']).slice(-10)}</td>
+                                <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">{String(c['Petitioner']||'')}</td>
+                                <td className="px-4 py-3 whitespace-nowrap">
                                   {getMobile(c)
-                                    ? <a href={`tel:${getMobile(c)}`} className="text-indigo-600 hover:underline font-mono text-xs">{getMobile(c)}</a>
-                                    : <span className="text-slate-300 text-xs">—</span>}
+                                    ? <a href={`tel:${getMobile(c)}`} className="text-indigo-600 hover:underline font-mono">{getMobile(c)}</a>
+                                    : <span className="text-slate-300">—</span>}
                                 </td>
-                                <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(c['Taluk/வட்டம்']||''))}</td>
-                                <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
-                                <td className="px-3 py-2.5">
-                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'}`}>{c.Audit_Grade}</span>
+                                <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{shortTaluk(String(c['Taluk/வட்டம்']||''))}</td>
+                                <td className="px-4 py-3 text-center text-slate-600 font-medium">{c['Ticket Age in Days']??'—'}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-white font-bold ${c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'}`}>{c.Audit_Grade}</span>
                                 </td>
-                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                <td className="px-4 py-3 whitespace-nowrap">
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{String(c['Status Display'])}</span>
                                 </td>
-                                {/* Request Made — fully readable */}
-                                <td className="px-3 py-2.5 w-64">
-                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-700 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
-                                    {String(c['Petition Details']||'—')}
-                                  </div>
+                                {/* Request Made — fully visible, scrollable */}
+                                <td className="px-4 py-3 min-w-[280px] max-w-[360px]">
+                                  <div className="max-h-40 overflow-y-auto text-slate-700 leading-relaxed whitespace-pre-wrap text-xs pr-1">{String(c['Petition Details']||'—')}</div>
                                 </td>
-                                {/* Reply Given — fully readable */}
-                                <td className="px-3 py-2.5 w-64">
-                                  <div className="max-h-36 overflow-y-auto text-xs leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
+                                {/* Reply Given — fully visible, scrollable */}
+                                <td className="px-4 py-3 min-w-[280px] max-w-[360px]">
+                                  <div className="max-h-40 overflow-y-auto leading-relaxed whitespace-pre-wrap text-xs pr-1">
                                     {c._officer_reply
-                                      ? <span className="text-slate-600">{c._officer_reply}</span>
-                                      : <span className="italic text-red-400">No reply given</span>}
+                                      ? <span className="text-slate-700">{c._officer_reply}</span>
+                                      : <span className="italic text-red-400 font-medium">No reply given</span>}
                                   </div>
                                 </td>
-                                <td className="px-3 py-2.5 w-52">
-                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
-                                    {c.English_Analysis||'—'}
-                                  </div>
+                                <td className="px-4 py-3 min-w-[220px] max-w-[280px]">
+                                  <div className="max-h-40 overflow-y-auto text-slate-500 leading-relaxed whitespace-pre-wrap text-xs pr-1">{c.English_Analysis||'—'}</div>
                                 </td>
-                                <td className="px-3 py-2.5 w-52">
-                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
-                                    {c.Required_Correction_Tamil||'—'}
-                                  </div>
+                                <td className="px-4 py-3 min-w-[220px] max-w-[280px]">
+                                  <div className="max-h-40 overflow-y-auto text-slate-500 leading-relaxed whitespace-pre-wrap text-xs pr-1">{c.Required_Correction_Tamil||'—'}</div>
                                 </td>
                               </tr>
                             ))}
