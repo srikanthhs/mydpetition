@@ -11,8 +11,8 @@ import {
   Upload, Download, Play, Shield, AlertCircle, FileSpreadsheet,
   CheckCircle2, Clock, XCircle, Loader2, TrendingUp,
   ClipboardList, Home, Trash2, Save, ChevronRight, ChevronDown,
-  RefreshCw, AlertTriangle, Users, X, Printer,
-  MessageCircle,
+  RefreshCw, AlertTriangle, Users, X, Printer, FileText,
+  MessageCircle, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 
 /* ══════════════════════════════════════════════
@@ -111,6 +111,11 @@ export default function Dashboard() {
   const [cloudStatus,setCloudStatus]= useState<'idle'|'saving'|'saved'|'error'>('idle');
   const [loading,    setLoading]    = useState(true);
   const [section,    setSection]    = useState<Section>('upload');
+  const [sidebarOpen,setSidebarOpen]= useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const v = localStorage.getItem('myd_sidebar');
+    return v === null ? true : v === '1';
+  });
 
   // Filter state for audit section
   const [filterText,   setFilterText]   = useState('');
@@ -603,7 +608,7 @@ export default function Dashboard() {
     { id:'audit',      icon:<ClipboardList size={16}/>, label:'Run Audit',   badge:results.length||undefined, disabled:!rows.length },
     { id:'insights',   icon:<TrendingUp size={16}/>,    label:'Insights',    disabled:!results.length },
     { id:'escalation', icon:<AlertTriangle size={16}/>, label:'Escalation',  badge:escalated.length||undefined, badgeColor:'red', disabled:!results.length },
-    { id:'reports',    icon:<Users size={16}/>,         label:'Reports',     disabled:!results.length },
+    { id:'reports',    icon:<FileText size={16}/>,       label:'Reports',     disabled:!results.length },
     { id:'export',     icon:<Download size={16}/>,      label:'Export',      disabled:!rows.length },
   ];
 
@@ -621,45 +626,70 @@ export default function Dashboard() {
     <div className="flex min-h-screen bg-slate-50">
 
       {/* ═══ SIDEBAR ═══ */}
-      <aside className="w-56 min-h-screen bg-white border-r border-slate-200 flex flex-col fixed top-0 left-0 z-30 shadow-sm">
-        <div className="px-5 py-5 border-b border-slate-100">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shrink-0">
-              <Shield size={16} className="text-white"/>
+      <aside className={`${sidebarOpen ? 'w-56' : 'w-14'} min-h-screen bg-white border-r border-slate-200 flex flex-col fixed top-0 left-0 z-30 shadow-sm transition-all duration-200`}>
+
+        {/* Logo + collapse toggle */}
+        <div className={`flex items-center border-b border-slate-100 ${sidebarOpen ? 'px-4 py-4 justify-between' : 'px-2 py-4 justify-center'}`}>
+          {sidebarOpen && (
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shrink-0">
+                <Shield size={15} className="text-white"/>
+              </div>
+              <div>
+                <p className="font-bold text-slate-800 text-sm leading-tight">MYD Audit</p>
+                <p className="text-xs text-slate-400 leading-tight">Collectorate</p>
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-slate-800 text-sm leading-tight">MYD Audit</p>
-              <p className="text-xs text-slate-400 leading-tight">Collectorate</p>
+          )}
+          {!sidebarOpen && (
+            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+              <Shield size={15} className="text-white"/>
             </div>
-          </div>
+          )}
+          <button
+            onClick={() => {
+              const next = !sidebarOpen;
+              setSidebarOpen(next);
+              localStorage.setItem('myd_sidebar', next ? '1' : '0');
+            }}
+            className={`p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors ${sidebarOpen ? '' : 'mt-2'}`}
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
+            {sidebarOpen ? <PanelLeftClose size={15}/> : <PanelLeftOpen size={15}/>}
+          </button>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-0.5">
+        <nav className="flex-1 px-2 py-3 space-y-0.5">
           {navItems.map(item => (
             <button key={item.id}
               onClick={() => !item.disabled && setSection(item.id)}
               disabled={item.disabled}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                section === item.id
+              title={!sidebarOpen ? item.label : undefined}
+              className={`w-full flex items-center rounded-xl text-sm transition-colors
+                ${sidebarOpen ? 'justify-between px-3 py-2.5' : 'justify-center px-0 py-2.5'}
+                ${section === item.id
                   ? 'bg-indigo-600 text-white font-semibold'
                   : item.disabled
                   ? 'text-slate-300 cursor-not-allowed'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-              }`}>
-              <div className="flex items-center gap-2.5">{item.icon}<span>{item.label}</span></div>
-              {item.badge ? (
+                }`}>
+              <div className={`flex items-center ${sidebarOpen ? 'gap-2.5' : ''}`}>
+                <span className="shrink-0">{item.icon}</span>
+                {sidebarOpen && <span>{item.label}</span>}
+              </div>
+              {sidebarOpen && item.badge ? (
                 <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                  section===item.id
-                    ? 'bg-indigo-500 text-white'
-                    : item.badgeColor === 'red'
-                    ? 'bg-red-100 text-red-700'
-                    : 'bg-slate-100 text-slate-600'
+                  section===item.id ? 'bg-indigo-500 text-white'
+                  : item.badgeColor === 'red' ? 'bg-red-100 text-red-700'
+                  : 'bg-slate-100 text-slate-600'
                 }`}>{item.badge.toLocaleString()}</span>
+              ) : !sidebarOpen && item.badge && item.badgeColor === 'red' ? (
+                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"/>
               ) : null}
             </button>
           ))}
         </nav>
 
+        {sidebarOpen && (
         <div className="px-4 py-4 border-t border-slate-100 space-y-2">
           {cloudStatus === 'saving' && (
             <div className="flex items-center gap-1.5 text-xs text-indigo-600">
@@ -689,10 +719,19 @@ export default function Dashboard() {
             </button>
           )}
         </div>
+        )}
+        {/* Collapsed footer: just cloud dot */}
+        {!sidebarOpen && (
+          <div className="py-3 flex justify-center border-t border-slate-100">
+            <span className={`w-2 h-2 rounded-full ${
+              cloudStatus==='saved'?'bg-emerald-500':cloudStatus==='saving'?'bg-indigo-400 animate-pulse':cloudStatus==='error'?'bg-red-500':'bg-slate-300'
+            }`} title={cloudStatus}/>
+          </div>
+        )}
       </aside>
 
       {/* ═══ MAIN ═══ */}
-      <div className="ml-56 flex-1 flex flex-col min-h-screen">
+      <div className={`${sidebarOpen ? 'ml-56' : 'ml-14'} flex-1 flex flex-col min-h-screen transition-all duration-200`}>
 
         <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -1339,103 +1378,277 @@ export default function Dashboard() {
           )}
 
           {/* ══════ REPORTS ══════ */}
-          {section === 'reports' && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-3">
+          {section === 'reports' && metrics && (
+            <div className="space-y-5" id="print-report">
+              {/* Print styles injected inline */}
+              <style>{`
+                @media print {
+                  body * { visibility: hidden; }
+                  #print-report, #print-report * { visibility: visible; }
+                  #print-report { position: absolute; left: 0; top: 0; width: 100%; }
+                  .no-print { display: none !important; }
+                  .print-break { page-break-before: always; }
+                }
+              `}</style>
+
+              {/* Toolbar */}
+              <div className="flex items-center gap-3 flex-wrap no-print">
                 <input type="text" value={reportSearch} onChange={e=>setReportSearch(e.target.value)}
-                  placeholder="Search officer name…"
-                  className="border border-slate-200 rounded-xl px-4 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
-                <span className="text-xs text-slate-400">{officerReportData.length} officers</span>
+                  placeholder="Search officer…"
+                  className="border border-slate-200 rounded-xl px-4 py-2 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                <button onClick={()=>window.print()}
+                  className="flex items-center gap-2 bg-indigo-600 text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-indigo-700 transition-colors">
+                  <Printer size={14}/> Print Full Report
+                </button>
+                <span className="text-xs text-slate-400">{officerReportData.length} officers · {results.length.toLocaleString()} petitions</span>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                {officerReportData
-                  .filter(o => o.name.toLowerCase().includes(reportSearch.toLowerCase()))
-                  .map(o => (
-                    <div key={o.name} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-800 text-sm leading-tight">{o.name}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{o.total} total cases</p>
-                        </div>
-                        <span className={`text-sm font-bold px-2.5 py-1 rounded-xl ${
-                          o.failRate >= 70 ? 'bg-red-100 text-red-700' :
-                          o.failRate >= 40 ? 'bg-amber-100 text-amber-700' :
-                          'bg-emerald-100 text-emerald-700'
-                        }`}>{o.failRate}% fail</span>
-                      </div>
-                      <div className="flex gap-2 text-xs">
-                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg font-medium">A: {o.A}</span>
-                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-lg font-medium">C: {o.C}</span>
-                        <span className="bg-red-50 text-red-700 px-2 py-1 rounded-lg font-medium">F: {o.F}</span>
-                      </div>
-                      <div className="flex gap-3 text-xs text-slate-500">
-                        <span className="text-emerald-600 font-semibold">{o.pass} passed</span>
-                        <span className="text-red-500 font-semibold">{o.fail} failed</span>
-                      </div>
-                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${
-                          o.failRate>=70?'bg-red-500':o.failRate>=40?'bg-amber-500':'bg-emerald-500'
-                        }`} style={{width:`${100-o.failRate}%`}}/>
-                      </div>
-                      <button onClick={()=>setReportOfficer(o.name)}
-                        className="w-full text-xs bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200 rounded-lg py-1.5 font-medium transition-colors text-slate-600">
-                        View Details
-                      </button>
+              {/* ── SECTION 1: Executive Summary ── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                {/* Letterhead */}
+                <div className="bg-indigo-700 text-white px-8 py-5">
+                  <p className="text-xs uppercase tracking-widest opacity-70 mb-1">Government of Tamil Nadu</p>
+                  <h2 className="text-lg font-bold leading-tight">Mayiladuthurai District Collectorate</h2>
+                  <p className="text-sm opacity-80 mt-0.5">Mudhalvarin Mugavari (CM Helpline) — Grievance Audit Report</p>
+                  <p className="text-xs opacity-60 mt-2">Generated: {new Date().toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
+                </div>
+
+                {/* KPI row */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-slate-100">
+                  {[
+                    { label:'Total Petitions',   value: results.length.toLocaleString(),            sub:'in this batch',          color:'indigo' },
+                    { label:'Overall Pass Rate',  value: `${metrics.passRate}%`,                     sub:`${metrics.passed} passed`, color:'green' },
+                    { label:'Grade F (Fail)',      value: (metrics.gradeData.find(g=>g.grade==='F')?.count||0).toLocaleString(), sub:'need immediate action', color:'red' },
+                    { label:'Escalated (≥30d+F)', value: escalated.length.toLocaleString(),          sub:'require urgent follow-up', color:'amber' },
+                  ].map(({label,value,sub,color})=>(
+                    <div key={label} className="px-6 py-5">
+                      <p className="text-xs text-slate-500 mb-1">{label}</p>
+                      <p className={`text-2xl font-bold ${color==='indigo'?'text-indigo-600':color==='green'?'text-emerald-600':color==='red'?'text-red-500':'text-amber-500'}`}>{value}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{sub}</p>
                     </div>
                   ))}
+                </div>
               </div>
+
+              {/* ── SECTION 2: Department Performance ── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <span className="w-1 h-5 bg-indigo-600 rounded-full inline-block"/>
+                  Department-wise Performance
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                        {['#','Department','Total','Grade A','Grade C','Grade F','Pass Rate','Status'].map(h=>(
+                          <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {metrics.deptRate.slice().reverse().map((d,i)=>(
+                        <tr key={d.dept} className="hover:bg-slate-50">
+                          <td className="px-4 py-2.5 text-slate-400 text-xs">{i+1}</td>
+                          <td className="px-4 py-2.5 font-medium text-slate-700">{d.dept}</td>
+                          <td className="px-4 py-2.5 text-slate-600">{d.total}</td>
+                          <td className="px-4 py-2.5 text-emerald-600 font-semibold">{d.pass}</td>
+                          <td className="px-4 py-2.5 text-amber-600 font-semibold">{d.fail > 0 ? Math.round((results.filter(r=>shortDept(String(r['Department Name']||''))=== d.dept && r.Audit_Grade==='C').length) ) : 0}</td>
+                          <td className="px-4 py-2.5 text-red-600 font-semibold">{d.fail}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${d.rate>=70?'bg-emerald-500':d.rate>=40?'bg-amber-500':'bg-red-500'}`} style={{width:`${d.rate}%`}}/>
+                              </div>
+                              <span className={`text-xs font-bold ${d.rate>=70?'text-emerald-600':d.rate>=40?'text-amber-600':'text-red-600'}`}>{d.rate}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${d.rate>=70?'bg-emerald-100 text-emerald-700':d.rate>=40?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>
+                              {d.rate>=70?'Good':d.rate>=40?'Needs Attention':'Critical'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ── SECTION 3: Officer Accountability ── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 print-break">
+                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <span className="w-1 h-5 bg-amber-500 rounded-full inline-block"/>
+                  Officer Accountability
+                  <span className="text-xs font-normal text-slate-400 ml-2">({officerReportData.length} officers)</span>
+                </h3>
+                <div className="mb-3 no-print">
+                  <input type="text" value={reportSearch} onChange={e=>setReportSearch(e.target.value)}
+                    placeholder="Filter officer name…"
+                    className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                        {['#','Officer Name','Total','Pass (A)','Partial (C)','Fail (F)','Fail Rate','Action Required'].map(h=>(
+                          <th key={h} className="px-4 py-3 text-left font-semibold whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {officerReportData
+                        .filter(o=>o.name.toLowerCase().includes(reportSearch.toLowerCase()))
+                        .map((o,i)=>(
+                        <tr key={o.name} className="hover:bg-slate-50">
+                          <td className="px-4 py-2.5 text-slate-400 text-xs">{i+1}</td>
+                          <td className="px-4 py-2.5 font-medium text-slate-700">
+                            <button className="hover:text-indigo-600 text-left no-print" onClick={()=>setReportOfficer(o.name)}>{o.name}</button>
+                            <span className="hidden print:inline">{o.name}</span>
+                          </td>
+                          <td className="px-4 py-2.5 text-slate-600 font-medium">{o.total}</td>
+                          <td className="px-4 py-2.5 text-emerald-600 font-semibold">{o.A}</td>
+                          <td className="px-4 py-2.5 text-amber-600 font-semibold">{o.C}</td>
+                          <td className="px-4 py-2.5 text-red-600 font-semibold">{o.F}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${o.failRate>=70?'bg-red-500':o.failRate>=40?'bg-amber-500':'bg-emerald-500'}`} style={{width:`${o.failRate}%`}}/>
+                              </div>
+                              <span className={`text-xs font-bold ${o.failRate>=70?'text-red-600':o.failRate>=40?'text-amber-600':'text-emerald-600'}`}>{o.failRate}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${o.failRate>=70?'bg-red-100 text-red-700':o.failRate>=40?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700'}`}>
+                              {o.failRate>=70?'Immediate Action':o.failRate>=40?'Review Required':'Satisfactory'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ── SECTION 4: Taluk Summary ── */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <span className="w-1 h-5 bg-emerald-500 rounded-full inline-block"/>
+                  Taluk-wise Summary
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+                        {['Taluk','Total','Passed','Failed','Pass Rate'].map(h=>(
+                          <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {metrics.talukPerf.map(t=>{
+                        const total=t.pass+t.fail; const rate=Math.round((t.pass/total)*100);
+                        return (
+                          <tr key={t.taluk} className="hover:bg-slate-50">
+                            <td className="px-4 py-2.5 font-medium text-slate-700">{t.taluk}</td>
+                            <td className="px-4 py-2.5 text-slate-600">{total}</td>
+                            <td className="px-4 py-2.5 text-emerald-600 font-semibold">{t.pass}</td>
+                            <td className="px-4 py-2.5 text-red-500 font-semibold">{t.fail}</td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full ${rate>=70?'bg-emerald-500':rate>=40?'bg-amber-500':'bg-red-500'}`} style={{width:`${rate}%`}}/>
+                                </div>
+                                <span className="text-xs font-bold text-slate-600">{rate}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* ── SECTION 5: Top Escalated Cases ── */}
+              {escalated.length > 0 && (
+                <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-6">
+                  <h3 className="font-bold text-red-700 mb-4 flex items-center gap-2">
+                    <span className="w-1 h-5 bg-red-500 rounded-full inline-block"/>
+                    🚨 Top Escalated Cases (Age ≥ 30 days, Grade F) — {escalated.length} total
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-red-50 text-red-700 uppercase tracking-wide">
+                          {['Grievance ID','Petitioner','Department','Officer','Taluk','Age (Days)','Required Action (Tamil)'].map(h=>(
+                            <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {escalated.slice(0,20).map((r,i)=>(
+                          <tr key={i} className="hover:bg-red-50/30">
+                            <td className="px-3 py-2 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
+                            <td className="px-3 py-2 text-slate-700">{String(r['Petitioner']||'').slice(0,18)}</td>
+                            <td className="px-3 py-2 text-slate-600">{shortDept(String(r['Department Name']||''))}</td>
+                            <td className="px-3 py-2 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,20)}</td>
+                            <td className="px-3 py-2 text-slate-500">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
+                            <td className="px-3 py-2 text-center"><span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{r['Ticket Age in Days']}</span></td>
+                            <td className="px-3 py-2 text-slate-500 max-w-[220px]"><span className="line-clamp-2">{r.Required_Correction_Tamil||'—'}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {escalated.length > 20 && <p className="text-xs text-slate-400 mt-3 text-center">Showing 20 of {escalated.length} escalated cases. Export CSV for full list.</p>}
+                  </div>
+                </div>
+              )}
 
               {/* Officer Detail Modal */}
               {reportOfficer && (() => {
                 const officer = officerReportData.find(o=>o.name===reportOfficer);
                 if (!officer) return null;
                 return (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={()=>setReportOfficer(null)}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 no-print" onClick={()=>setReportOfficer(null)}>
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col mx-4" onClick={e=>e.stopPropagation()}>
                       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
                         <div>
                           <p className="font-bold text-slate-800">{officer.name}</p>
-                          <p className="text-xs text-slate-400">{officer.total} cases · {officer.failRate}% fail rate</p>
+                          <p className="text-xs text-slate-400">{officer.total} cases · {100-officer.failRate}% pass rate · A:{officer.A} C:{officer.C} F:{officer.F}</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={()=>window.print()}
                             className="flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors text-slate-700">
                             <Printer size={13}/> Print
                           </button>
-                          <button onClick={()=>setReportOfficer(null)} className="text-slate-400 hover:text-slate-700">
-                            <X size={18}/>
-                          </button>
+                          <button onClick={()=>setReportOfficer(null)} className="text-slate-400 hover:text-slate-700 p-1"><X size={18}/></button>
                         </div>
                       </div>
                       <div className="overflow-auto flex-1 px-6 py-4">
                         <table className="w-full text-xs">
                           <thead>
-                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide">
-                              {['ID','Grade','Status','Age','Reply Snippet'].map(h=>(
+                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide sticky top-0">
+                              {['Grievance ID','Petitioner','Taluk','Type','Age','Grade','Status','Officer Reply','Tamil Correction'].map(h=>(
                                 <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {officer.cases.map((c,i)=>(
-                              <tr key={i} className="hover:bg-slate-50">
+                              <tr key={i} className={`hover:bg-slate-50 ${c.Audit_Grade==='F'?'bg-red-50/30':''}`}>
                                 <td className="px-3 py-2.5 font-mono text-slate-500">{String(c['Grievance ID']).slice(-10)}</td>
+                                <td className="px-3 py-2.5 text-slate-700">{String(c['Petitioner']||'').slice(0,16)}</td>
+                                <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(c['Taluk/வட்டம்']||''))}</td>
+                                <td className="px-3 py-2.5 text-slate-500 max-w-[80px] truncate">{String(c['Grievance Type/குறையின் வகை']||'').slice(0,20)}</td>
+                                <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
                                 <td className="px-3 py-2.5">
-                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${
-                                    c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
-                                  }`}>{c.Audit_Grade}</span>
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'}`}>{c.Audit_Grade}</span>
                                 </td>
                                 <td className="px-3 py-2.5 whitespace-nowrap">
-                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                    c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':
-                                    c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'
-                                  }`}>{String(c['Status Display'])}</span>
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{String(c['Status Display'])}</span>
                                 </td>
-                                <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
-                                <td className="px-3 py-2.5 text-slate-600 max-w-[280px]">
-                                  <span className="line-clamp-2">{c._officer_reply.slice(0,100) || '—'}</span>
-                                </td>
+                                <td className="px-3 py-2.5 text-slate-600 max-w-[180px]"><span className="line-clamp-2" title={c._officer_reply}>{c._officer_reply||'—'}</span></td>
+                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2" title={c.Required_Correction_Tamil}>{c.Required_Correction_Tamil||'—'}</span></td>
                               </tr>
                             ))}
                           </tbody>
