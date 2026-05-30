@@ -142,6 +142,31 @@ export async function fsLoad(): Promise<{
 }
 
 /* ════════════════════════════════════════════
+   GEMINI KEY
+════════════════════════════════════════════ */
+export async function fsSaveGeminiKey(key: string): Promise<void> {
+  try {
+    const id = getDeviceId();
+    await setDoc(doc(db, 'sessions', id), { geminiKey: key }, { merge: true });
+  } catch (e) {
+    console.error('fsSaveGeminiKey', e);
+  }
+}
+
+export async function fsLoadGeminiKey(): Promise<string> {
+  try {
+    const id = getDeviceId();
+    const snap = await getDoc(doc(db, 'sessions', id));
+    if (!snap.exists()) return '';
+    const data = snap.data() as Record<string, unknown>;
+    return typeof data.geminiKey === 'string' ? data.geminiKey : '';
+  } catch (e) {
+    console.error('fsLoadGeminiKey', e);
+    return '';
+  }
+}
+
+/* ════════════════════════════════════════════
    CLEAR
 ════════════════════════════════════════════ */
 export async function fsClear(): Promise<void> {

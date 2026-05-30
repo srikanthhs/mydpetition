@@ -1,16 +1,18 @@
 'use client';
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { GrievanceRow, AuditResult, PreStats } from '@/lib/types';
-import { fsSaveRows, fsSaveResults, fsLoad, fsClear } from '@/lib/store';
+import { fsSaveRows, fsSaveResults, fsLoad, fsClear, fsSaveGeminiKey, fsLoadGeminiKey } from '@/lib/store';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, PieChart, Pie, Legend,
+  ResponsiveContainer, Cell, Legend,
   LabelList,
 } from 'recharts';
 import {
   Upload, Download, Play, Shield, AlertCircle, FileSpreadsheet,
-  CheckCircle2, Clock, XCircle, Loader2, BarChart2, TrendingUp,
-  ClipboardList, Home, Trash2, Save,
+  CheckCircle2, Clock, XCircle, Loader2, TrendingUp,
+  ClipboardList, Home, Trash2, Save, ChevronRight, ChevronDown,
+  RefreshCw, AlertTriangle, Users, X, Printer,
+  MessageCircle,
 } from 'lucide-react';
 
 /* ══════════════════════════════════════════════
@@ -20,7 +22,6 @@ const SK_ROWS    = 'myd_rows_v4';
 const SK_RESULTS = 'myd_results_v4';
 const SK_META    = 'myd_meta_v4';
 
-// purge old keys so they don't waste quota
 if (typeof window !== 'undefined') {
   ['myd_rows_v3','myd_results_v3','myd_meta_v3'].forEach(k => localStorage.removeItem(k));
 }
@@ -41,7 +42,6 @@ function slimRow(r: GrievanceRow): GrievanceRow {
   return o as GrievanceRow;
 }
 
-/* Trim long Gemini text so results fit in localStorage (5 MB limit) */
 function slimResult(r: AuditResult): AuditResult {
   return {
     ...r,
@@ -51,14 +51,8 @@ function slimResult(r: AuditResult): AuditResult {
   };
 }
 
-/* Returns true on success, false if quota exceeded */
 function lsSave(k: string, v: unknown): boolean {
-  try {
-    localStorage.setItem(k, JSON.stringify(v));
-    return true;
-  } catch {
-    return false;
-  }
+  try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; }
 }
 function lsLoad<T>(k: string): T | null {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as T : null; } catch { return null; }
@@ -85,7 +79,7 @@ const STATUS_CLR: Record<string,string> = {
 };
 const GRADE_CLR: Record<string,string> = { A:'#22c55e', C:'#f59e0b', F:'#ef4444' };
 
-type Section = 'upload' | 'overview' | 'audit' | 'insights' | 'export';
+type Section = 'upload' | 'overview' | 'audit' | 'insights' | 'escalation' | 'reports' | 'export';
 
 /* ══════════════════════════════════════════════
    MAIN COMPONENT
@@ -99,18 +93,38 @@ export default function Dashboard() {
   const [parsing,    setParsing]    = useState(false);
   const [processed,  setProcessed]  = useState(0);
   const [apiKey,     setApiKey]     = useState('');
+  const [keySaved,   setKeySaved]   = useState(false);
   const [fileErr,    setFileErr]    = useState('');
   const [fileName,   setFileName]   = useState('');
-  const [savedAt,     setSavedAt]     = useState<string|null>(null);
-  const [saveErr,     setSaveErr]     = useState(false);
-  const [cloudStatus, setCloudStatus] = useState<'idle'|'saving'|'saved'|'error'>('idle');
-  const [loading,     setLoading]     = useState(true);   // initial Firestore fetch
-  const [section,     setSection]     = useState<Section>('upload');
+  const [savedAt,    setSavedAt]    = useState<string|null>(null);
+  const [saveErr,    setSaveErr]    = useState(false);
+  const [cloudStatus,setCloudStatus]= useState<'idle'|'saving'|'saved'|'error'>('idle');
+  const [loading,    setLoading]    = useState(true);
+  const [section,    setSection]    = useState<Section>('upload');
 
-  /* ── Restore from Firestore on mount (localStorage as fast fallback) ── */
+  // Filter state for audit section
+  const [filterText,   setFilterText]   = useState('');
+  const [filterGrade,  setFilterGrade]  = useState('All');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [filterDept,   setFilterDept]   = useState('All');
+  const [filterTaluk,  setFilterTaluk]  = useState('All');
+
+  // Expanded rows in audit table
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  // Re-audit spinner per row index
+  const [reauditingIdx, setReauditingIdx] = useState<Set<number>>(new Set());
+
+  // Insights department filter
+  const [insightsDept, setInsightsDept] = useState('All');
+
+  // Reports modal
+  const [reportOfficer, setReportOfficer] = useState<string|null>(null);
+  const [reportSearch,  setReportSearch]  = useState('');
+
+  /* ── Restore from Firestore on mount ── */
   useEffect(() => {
     async function restore() {
-      // 1. Try localStorage first for instant load
       const r  = lsLoad<GrievanceRow[]>(SK_ROWS);
       const rs = lsLoad<AuditResult[]>(SK_RESULTS);
       const m  = lsLoad<{file:string;savedAt:string}>(SK_META);
@@ -118,7 +132,6 @@ export default function Dashboard() {
       if (rs?.length) { setResults(rs); setSection('insights'); }
       if (m) { setFileName(m.file); setSavedAt(m.savedAt); }
 
-      // 2. Then load from Firestore (authoritative source)
       try {
         const { meta, rows: fr, results: frs } = await fsLoad();
         if (fr.length > (r?.length ?? 0)) {
@@ -135,29 +148,27 @@ export default function Dashboard() {
           setSavedAt(ts);
           lsSave(SK_META, { file: meta.fileName, savedAt: ts });
         }
-      } catch { /* network offline — localStorage data already shown */ }
+        // Load gemini key from Firestore
+        const key = await fsLoadGeminiKey();
+        if (key) setApiKey(key);
+      } catch { /* offline */ }
       finally { setLoading(false); }
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Save rows to Firestore + localStorage ── */
   const saveRows = useCallback(async (newRows: GrievanceRow[], fname: string) => {
-    // localStorage immediately
     const ok = lsSave(SK_ROWS, newRows);
     setSaveErr(!ok);
     const ts = new Date().toLocaleString('en-IN');
     setSavedAt(ts);
     lsSave(SK_META, { file: fname, savedAt: ts });
-
-    // Firestore in background
     setCloudStatus('saving');
     const cloudOk = await fsSaveRows(newRows, fname);
     setCloudStatus(cloudOk ? 'saved' : 'error');
     if (!cloudOk) setSaveErr(true);
   }, []);
 
-  /* ── Save results to Firestore + localStorage (called once on audit complete) ── */
   const saveResultsNow = useCallback(async (list: AuditResult[], fname: string) => {
     const slim = list.map(slimResult);
     const ok = lsSave(SK_RESULTS, slim);
@@ -165,20 +176,25 @@ export default function Dashboard() {
     const ts = new Date().toLocaleString('en-IN');
     setSavedAt(ts);
     lsSave(SK_META, { file: fname, savedAt: ts });
-
     setCloudStatus('saving');
     const cloudOk = await fsSaveResults(list, fname);
     setCloudStatus(cloudOk ? 'saved' : 'error');
     if (!cloudOk) setSaveErr(true);
   }, []);
 
-  /* ── Clear everything ── */
   const clearAll = useCallback(async () => {
     [SK_ROWS, SK_RESULTS, SK_META].forEach(k => localStorage.removeItem(k));
     setRows([]); setResults([]); setFileName(''); setFileErr('');
     setSavedAt(null); setSaveErr(false); setCloudStatus('idle'); setSection('upload');
     await fsClear();
   }, []);
+
+  /* ── Save Gemini key ── */
+  const saveKey = useCallback(async () => {
+    await fsSaveGeminiKey(apiKey);
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 3000);
+  }, [apiKey]);
 
   /* ── Parse file ── */
   const parseFile = useCallback(async (file: File) => {
@@ -250,15 +266,56 @@ export default function Dashboard() {
         });
       }
       setProcessed(i + 1);
-      /* Update UI every 25 rows so table is live, but don't thrash localStorage */
       if ((i + 1) % 25 === 0) setResults([...collected]);
     }
 
-    /* Final state + single localStorage write */
     setResults([...collected]);
     saveResultsNow(collected, fileName);
     setProcessing(false); setSection('insights');
   }, [rows, apiKey, processing, saveResultsNow, fileName]);
+
+  /* ── Re-audit single row ── */
+  const reauditRow = useCallback(async (idx: number) => {
+    const row = results[idx];
+    if (!row) return;
+    setReauditingIdx(prev => new Set(prev).add(idx));
+    try {
+      const res = await fetch('/api/audit', {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          ...(apiKey ? {'x-gemini-key': apiKey} : {}),
+        },
+        body: JSON.stringify({
+          petition_id:       row['Grievance ID'],
+          department:        row['Department Name'],
+          sub_department:    row['Sub Department/குறை தொடர்புடைய துணைத்துறை'],
+          responsible_officer: row['Responsible Officer/பொறுப்பு அதிகாரி'],
+          grievance_type:    row['Grievance Type/குறையின் வகை'],
+          citizen_grievance: row['Petition Details'],
+          officer_reply:     row._officer_reply,
+          status:            row['Status Display'],
+        }),
+      });
+      const d = await res.json();
+      const updated: AuditResult = {
+        ...row,
+        Audit_Grade: d.Grade || 'F',
+        Audit_Status: d.Status || 'FAIL',
+        English_Analysis: d.Audit_Reason_EN || '',
+        Required_Correction_Tamil: d.Fix_Action_TA || '',
+      };
+      setResults(prev => {
+        const next = [...prev];
+        next[idx] = updated;
+        saveResultsNow(next, fileName);
+        return next;
+      });
+    } catch { /* keep old */ }
+    finally {
+      setReauditingIdx(prev => { const s = new Set(prev); s.delete(idx); return s; });
+    }
+  }, [results, apiKey, saveResultsNow, fileName]);
 
   /* ── CSV download ── */
   const downloadCSV = useCallback(() => {
@@ -304,21 +361,55 @@ export default function Dashboard() {
     };
   }, [rows]);
 
+  /* ══ FILTERED RESULTS ══ */
+  const filteredResults = useMemo(() => {
+    return results.filter(r => {
+      const txt = filterText.toLowerCase();
+      if (txt && ![String(r['Grievance ID']),String(r['Petitioner']),String(r['Department Name'])].some(v=>v.toLowerCase().includes(txt))) return false;
+      if (filterGrade !== 'All' && r.Audit_Grade !== filterGrade) return false;
+      if (filterStatus !== 'All' && String(r['Status Display']) !== filterStatus) return false;
+      if (filterDept !== 'All' && String(r['Department Name']) !== filterDept) return false;
+      if (filterTaluk !== 'All' && String(r['Taluk/வட்டம்']) !== filterTaluk) return false;
+      return true;
+    });
+  }, [results, filterText, filterGrade, filterStatus, filterDept, filterTaluk]);
+
+  const uniqueDepts  = useMemo(() => Array.from(new Set(results.map(r=>String(r['Department Name']||'')))).sort(), [results]);
+  const uniqueTaluks = useMemo(() => Array.from(new Set(results.map(r=>String(r['Taluk/வட்டம்']||'')))).sort(), [results]);
+  const uniqueStatuses = useMemo(() => Array.from(new Set(results.map(r=>String(r['Status Display']||'')))).sort(), [results]);
+
+  const clearFilters = useCallback(() => {
+    setFilterText(''); setFilterGrade('All'); setFilterStatus('All');
+    setFilterDept('All'); setFilterTaluk('All');
+  }, []);
+
+  /* ══ ESCALATED ROWS ══ */
+  const escalated = useMemo(() =>
+    results.filter(r => Number(r['Ticket Age in Days']||0) >= 30 && r.Audit_Grade === 'F'),
+    [results]
+  );
+
+  /* ══ INSIGHTS FILTERED ══ */
+  const insightsResults = useMemo(() =>
+    insightsDept === 'All' ? results : results.filter(r => String(r['Department Name']||'') === insightsDept),
+    [results, insightsDept]
+  );
+
   /* ══ AUDIT METRICS ══ */
   const metrics = useMemo(() => {
-    if (!results.length) return null;
-    const total   = results.length;
-    const passed  = results.filter(r => r.Audit_Status === 'PASS').length;
+    const src = insightsResults;
+    if (!src.length) return null;
+    const total   = src.length;
+    const passed  = src.filter(r => r.Audit_Status === 'PASS').length;
     const failed  = total - passed;
     const passRate = Math.round((passed / total) * 100);
 
     const gradeData = ['A','C','F'].map(g => ({
-      grade: g, count: results.filter(r => r.Audit_Grade === g).length,
+      grade: g, count: src.filter(r => r.Audit_Grade === g).length,
     }));
 
-    // Dept pass rate
     const deptMap: Record<string,{pass:number;total:number}> = {};
-    results.forEach(r => {
+    src.forEach(r => {
       const d = shortDept(String(r['Department Name']||'?'));
       if (!deptMap[d]) deptMap[d] = {pass:0,total:0};
       deptMap[d].total++;
@@ -331,9 +422,8 @@ export default function Dashboard() {
       }))
       .sort((a,b) => a.rate - b.rate);
 
-    // Taluk pass/fail
     const talukMap: Record<string,{pass:number;fail:number}> = {};
-    results.forEach(r => {
+    src.forEach(r => {
       const t = shortTaluk(String(r['Taluk/வட்டம்']||'?'));
       if (!talukMap[t]) talukMap[t] = {pass:0,fail:0};
       if (r.Audit_Status === 'PASS') talukMap[t].pass++;
@@ -343,9 +433,8 @@ export default function Dashboard() {
       .map(([taluk,{pass,fail}]) => ({taluk, pass, fail}))
       .sort((a,b) => (b.pass+b.fail)-(a.pass+a.fail));
 
-    // Ticket age buckets (failed only)
     const ageBuckets: Record<string,number> = {'0-7':0,'8-15':0,'16-30':0,'31-60':0,'60+':0};
-    results.filter(r=>r.Audit_Status==='FAIL').forEach(r => {
+    src.filter(r=>r.Audit_Status==='FAIL').forEach(r => {
       const age = Number(r['Ticket Age in Days'] || 0);
       if (age<=7) ageBuckets['0-7']++;
       else if (age<=15) ageBuckets['8-15']++;
@@ -355,9 +444,8 @@ export default function Dashboard() {
     });
     const ageData = Object.entries(ageBuckets).map(([bucket,count]) => ({bucket, count}));
 
-    // Grievance type F rate
     const typeMap: Record<string,{f:number;total:number}> = {};
-    results.forEach(r => {
+    src.forEach(r => {
       const t = String(r['Grievance Type/குறையின் வகை']||'?').slice(0,32);
       if (!typeMap[t]) typeMap[t] = {f:0,total:0};
       typeMap[t].total++;
@@ -368,9 +456,8 @@ export default function Dashboard() {
       .map(([type,{f,total}]) => ({type, fRate: Math.round((f/total)*100), total}))
       .sort((a,b) => b.fRate - a.fRate).slice(0,10);
 
-    // Officer failures
     const officerMap: Record<string,{fail:number;total:number}> = {};
-    results.forEach(r => {
+    src.forEach(r => {
       const o = String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'Unknown').slice(0,28);
       if (!officerMap[o]) officerMap[o] = {fail:0,total:0};
       officerMap[o].total++;
@@ -384,9 +471,8 @@ export default function Dashboard() {
       }))
       .sort((a,b) => b.fail - a.fail).slice(0,10);
 
-    // Status → Grade cross
     const sgMap: Record<string,Record<string,number>> = {};
-    results.forEach(r => {
+    src.forEach(r => {
       const s = String(r['Status Display']||'?');
       const g = String(r.Audit_Grade);
       if (!sgMap[s]) sgMap[s] = {A:0,C:0,F:0};
@@ -394,26 +480,71 @@ export default function Dashboard() {
     });
     const sgData = Object.entries(sgMap).map(([status,grades]) => ({status,...grades}));
 
-    return { total, passed, failed, passRate, gradeData, deptRate, talukPerf, ageData, typeRate, officerFail, sgData };
+    // Days pending vs grade (stacked bar by age bucket)
+    const ageBucketLabels = ['0-7','8-15','16-30','31-60','60+'];
+    const ageGradeData = ageBucketLabels.map(bucket => {
+      const [lo, hi] = bucket === '60+' ? [60, Infinity] : bucket.split('-').map(Number);
+      const inBucket = src.filter(r => {
+        const age = Number(r['Ticket Age in Days']||0);
+        return age >= lo && age <= hi;
+      });
+      return {
+        bucket,
+        A: inBucket.filter(r=>r.Audit_Grade==='A').length,
+        C: inBucket.filter(r=>r.Audit_Grade==='C').length,
+        F: inBucket.filter(r=>r.Audit_Grade==='F').length,
+      };
+    });
+
+    // Top 10 pending officers (most F-grade)
+    const topFailOfficers = Object.entries(officerMap)
+      .map(([officer,{fail,total}]) => ({officer, fail, total}))
+      .sort((a,b)=>b.fail-a.fail).slice(0,10);
+
+    // Accepted vs Rejected pass rates
+    const accRej = ['Accepted','Rejected','In Process','Pending Action','Received'].map(status => {
+      const subset = src.filter(r=>String(r['Status Display']||'')===status);
+      const pass = subset.filter(r=>r.Audit_Status==='PASS').length;
+      return { status: status.replace(' Action',''), total: subset.length, pass, passRate: subset.length ? Math.round((pass/subset.length)*100) : 0 };
+    }).filter(x=>x.total>0);
+
+    return { total, passed, failed, passRate, gradeData, deptRate, talukPerf, ageData, typeRate, officerFail, sgData, ageGradeData, topFailOfficers, accRej };
+  }, [insightsResults]);
+
+  /* ══ OFFICER REPORT DATA ══ */
+  const officerReportData = useMemo(() => {
+    const map: Record<string,{pass:number;fail:number;A:number;C:number;F:number;cases:AuditResult[]}> = {};
+    results.forEach(r => {
+      const o = String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'Unknown');
+      if (!map[o]) map[o] = {pass:0,fail:0,A:0,C:0,F:0,cases:[]};
+      map[o].cases.push(r);
+      if (r.Audit_Status==='PASS') map[o].pass++;
+      else map[o].fail++;
+      if (r.Audit_Grade==='A') map[o].A++;
+      else if (r.Audit_Grade==='C') map[o].C++;
+      else map[o].F++;
+    });
+    return Object.entries(map).map(([name,d]) => ({
+      name, total: d.pass+d.fail, pass: d.pass, fail: d.fail,
+      failRate: Math.round((d.fail/(d.pass+d.fail))*100),
+      A: d.A, C: d.C, F: d.F, cases: d.cases,
+    })).sort((a,b)=>b.total-a.total);
   }, [results]);
 
   const progressPct = rows.length > 0 ? Math.round((processed / rows.length) * 100) : 0;
 
-  /* ══════════════════════════════════════════════
-     NAV CONFIG
-  ══════════════════════════════════════════════ */
-  const navItems: { id: Section; icon: React.ReactNode; label: string; badge?: number; disabled?: boolean }[] = [
-    { id:'upload',   icon:<Upload size={16}/>,        label:'Upload Data' },
-    { id:'overview', icon:<Home size={16}/>,          label:'Overview',  badge:rows.length||undefined, disabled:!rows.length },
-    { id:'audit',    icon:<ClipboardList size={16}/>, label:'Run Audit', badge:results.length||undefined, disabled:!rows.length },
-    { id:'insights', icon:<TrendingUp size={16}/>,    label:'Insights',  disabled:!results.length },
-    { id:'export',   icon:<Download size={16}/>,      label:'Export',    disabled:!rows.length },
+  /* ══ NAV CONFIG ══ */
+  const navItems: { id: Section; icon: React.ReactNode; label: string; badge?: number; badgeColor?: string; disabled?: boolean }[] = [
+    { id:'upload',     icon:<Upload size={16}/>,        label:'Upload Data' },
+    { id:'overview',   icon:<Home size={16}/>,          label:'Overview',    badge:rows.length||undefined,    disabled:!rows.length },
+    { id:'audit',      icon:<ClipboardList size={16}/>, label:'Run Audit',   badge:results.length||undefined, disabled:!rows.length },
+    { id:'insights',   icon:<TrendingUp size={16}/>,    label:'Insights',    disabled:!results.length },
+    { id:'escalation', icon:<AlertTriangle size={16}/>, label:'Escalation',  badge:escalated.length||undefined, badgeColor:'red', disabled:!results.length },
+    { id:'reports',    icon:<Users size={16}/>,         label:'Reports',     disabled:!results.length },
+    { id:'export',     icon:<Download size={16}/>,      label:'Export',      disabled:!rows.length },
   ];
 
-  /* ══════════════════════════════════════════════
-     RENDER
-  ══════════════════════════════════════════════ */
-  /* ── Initial loading screen while Firestore fetches ── */
+  /* ── Initial loading screen ── */
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
       <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"/>
@@ -421,12 +552,12 @@ export default function Dashboard() {
     </div>
   );
 
+  /* ══ RENDER ══ */
   return (
     <div className="flex min-h-screen bg-slate-50">
 
       {/* ═══ SIDEBAR ═══ */}
       <aside className="w-56 min-h-screen bg-white border-r border-slate-200 flex flex-col fixed top-0 left-0 z-30 shadow-sm">
-        {/* Logo */}
         <div className="px-5 py-5 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shrink-0">
@@ -439,7 +570,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5">
           {navItems.map(item => (
             <button key={item.id}
@@ -455,16 +585,18 @@ export default function Dashboard() {
               <div className="flex items-center gap-2.5">{item.icon}<span>{item.label}</span></div>
               {item.badge ? (
                 <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                  section===item.id ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600'
+                  section===item.id
+                    ? 'bg-indigo-500 text-white'
+                    : item.badgeColor === 'red'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-slate-100 text-slate-600'
                 }`}>{item.badge.toLocaleString()}</span>
               ) : null}
             </button>
           ))}
         </nav>
 
-        {/* Footer */}
         <div className="px-4 py-4 border-t border-slate-100 space-y-2">
-          {/* Cloud sync status */}
           {cloudStatus === 'saving' && (
             <div className="flex items-center gap-1.5 text-xs text-indigo-600">
               <Loader2 size={11} className="animate-spin"/> Syncing to Firebase…
@@ -475,12 +607,12 @@ export default function Dashboard() {
               <CheckCircle2 size={11}/> Firebase saved
             </div>
           )}
-          {cloudStatus === 'error' || saveErr ? (
+          {(cloudStatus === 'error' || saveErr) && (
             <div className="flex items-start gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 leading-tight">
               <AlertCircle size={11} className="mt-0.5 shrink-0"/>
               <span>Cloud save failed. Export CSV as backup.</span>
             </div>
-          ) : null}
+          )}
           {savedAt && cloudStatus !== 'saving' && (
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <Save size={10}/> {savedAt}
@@ -498,7 +630,6 @@ export default function Dashboard() {
       {/* ═══ MAIN ═══ */}
       <div className="ml-56 flex-1 flex flex-col min-h-screen">
 
-        {/* Top bar */}
         <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-20">
           <div>
             <h1 className="font-bold text-slate-800 text-sm capitalize">
@@ -527,7 +658,6 @@ export default function Dashboard() {
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
                 <h2 className="font-semibold text-slate-800 mb-1">Upload CM Helpline Export</h2>
                 <p className="text-sm text-slate-500 mb-6">Upload the Excel file downloaded from the Monday GDP portal.</p>
-
                 <div
                   className={`border-2 border-dashed rounded-xl p-10 text-center transition-all ${
                     parsing ? 'border-indigo-300 bg-indigo-50/30 cursor-wait'
@@ -535,8 +665,7 @@ export default function Dashboard() {
                   }`}
                   onClick={() => !parsing && fileRef.current?.click()}
                   onDrop={e => { e.preventDefault(); if (!parsing) e.dataTransfer.files[0] && parseFile(e.dataTransfer.files[0]); }}
-                  onDragOver={e => e.preventDefault()}
-                >
+                  onDragOver={e => e.preventDefault()}>
                   {parsing ? (
                     <><Loader2 className="mx-auto text-indigo-500 mb-3 animate-spin" size={40}/>
                       <p className="text-indigo-600 font-medium">Reading Excel file…</p>
@@ -549,15 +678,12 @@ export default function Dashboard() {
                   <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
                     onChange={e => e.target.files?.[0] && parseFile(e.target.files[0])}/>
                 </div>
-
                 {fileErr && (
                   <div className="mt-4 flex items-start gap-2 text-sm text-red-700 bg-red-50 px-4 py-3 rounded-lg">
                     <AlertCircle size={15} className="mt-0.5 shrink-0"/>{fileErr}
                   </div>
                 )}
               </div>
-
-              {/* Required columns hint */}
               <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5">
                 <p className="text-sm font-semibold text-indigo-800 mb-3">Required columns in your Excel:</p>
                 <div className="flex flex-wrap gap-2">
@@ -574,7 +700,6 @@ export default function Dashboard() {
           {/* ══════ OVERVIEW ══════ */}
           {section === 'overview' && pre && (
             <div className="space-y-5">
-              {/* Summary cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
                   { label:'Total Grievances',  value:pre.total,                             icon:<FileSpreadsheet size={18}/>, color:'indigo' },
@@ -593,7 +718,6 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                   <p className="text-sm font-semibold text-slate-700 mb-1">With Officer Reply</p>
@@ -606,7 +730,6 @@ export default function Dashboard() {
                   <p className="text-xs text-slate-400 mt-1">no API call needed</p>
                 </div>
               </div>
-
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <ChartCard title="Status Distribution">
                   <BarChart data={Object.entries(pre.statusDist).map(([s,c])=>({status:s.replace(' Action',''),count:c}))} barSize={36}>
@@ -619,7 +742,6 @@ export default function Dashboard() {
                     </Bar>
                   </BarChart>
                 </ChartCard>
-
                 <ChartCard title="Grievances by Taluk">
                   <BarChart data={pre.talukDist.map(([t,c])=>({taluk:shortTaluk(t),count:c}))} layout="vertical" barSize={20}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
@@ -629,7 +751,6 @@ export default function Dashboard() {
                     <Bar dataKey="count" fill="#6366f1" radius={[0,5,5,0]}/>
                   </BarChart>
                 </ChartCard>
-
                 <ChartCard title="Top Departments">
                   <BarChart data={pre.deptDist.map(([d,c])=>({dept:shortDept(d),count:c}))} layout="vertical" barSize={18}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
@@ -639,7 +760,6 @@ export default function Dashboard() {
                     <Bar dataKey="count" fill="#8b5cf6" radius={[0,5,5,0]}/>
                   </BarChart>
                 </ChartCard>
-
                 <ChartCard title="Top Grievance Types">
                   <BarChart data={pre.typeDist.map(([t,c])=>({type:t.slice(0,28),count:c}))} layout="vertical" barSize={18}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
@@ -655,17 +775,22 @@ export default function Dashboard() {
 
           {/* ══════ AUDIT ══════ */}
           {section === 'audit' && (
-            <div className="space-y-5 max-w-5xl">
+            <div className="space-y-5 max-w-6xl">
               {/* API key + start */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col sm:flex-row gap-4 items-end">
                 <div className="flex-1">
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Gemini API Key (optional)</label>
-                  <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)}
-                    placeholder="AIza... — leave blank for offline simulation"
+                  <input type="password" value={apiKey} onChange={e=>{ setApiKey(e.target.value); setKeySaved(false); }}
+                    placeholder="AIza… — leave blank for offline simulation"
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
                   <p className="text-xs text-slate-400 mt-1">Free key at <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-indigo-500 hover:underline">aistudio.google.com</a></p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={saveKey}
+                    className="flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg transition-colors">
+                    <Save size={12}/> Save Key
+                  </button>
+                  {keySaved && <span className="text-xs text-emerald-600 font-medium">Key saved ✓</span>}
                   {apiKey
                     ? <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full">🤖 Live Gemini</span>
                     : <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-full">⚡ Simulation</span>}
@@ -690,7 +815,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* Results table */}
+              {/* Results table with filters */}
               {results.length > 0 && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
                   <div className="flex items-center justify-between mb-4">
@@ -700,48 +825,139 @@ export default function Dashboard() {
                       <Download size={13}/> Download CSV
                     </button>
                   </div>
+
+                  {/* Filter bar */}
+                  <div className="flex flex-wrap gap-2 mb-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <input
+                      type="text" value={filterText} onChange={e=>setFilterText(e.target.value)}
+                      placeholder="Search ID, Petitioner, Department…"
+                      className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs w-52 focus:outline-none focus:ring-1 focus:ring-indigo-400"/>
+                    <select value={filterGrade} onChange={e=>setFilterGrade(e.target.value)}
+                      className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none">
+                      <option>All</option><option value="A">Grade A</option><option value="C">Grade C</option><option value="F">Grade F</option>
+                    </select>
+                    <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
+                      className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none">
+                      <option>All</option>
+                      {uniqueStatuses.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <select value={filterDept} onChange={e=>setFilterDept(e.target.value)}
+                      className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none max-w-[160px]">
+                      <option>All</option>
+                      {uniqueDepts.map(d=><option key={d} value={d}>{shortDept(d)}</option>)}
+                    </select>
+                    <select value={filterTaluk} onChange={e=>setFilterTaluk(e.target.value)}
+                      className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none">
+                      <option>All</option>
+                      {uniqueTaluks.map(t=><option key={t} value={t}>{shortTaluk(t)}</option>)}
+                    </select>
+                    <button onClick={clearFilters} className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors flex items-center gap-1">
+                      <X size={11}/> Clear
+                    </button>
+                    <span className="ml-auto text-xs text-slate-400 self-center">
+                      Showing {filteredResults.length.toLocaleString()} of {results.length.toLocaleString()}
+                    </span>
+                  </div>
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-slate-50 text-slate-500 uppercase text-left tracking-wide">
-                          {['ID','Petitioner','Department','Taluk','Type','Status','Age','Grade','Result','Analysis','Correction'].map(h=>(
+                          <th className="px-2 py-3 w-6"></th>
+                          {['ID','Petitioner','Department','Taluk','Status','Age','Grade','Result','Analysis'].map(h=>(
                             <th key={h} className="px-3 py-3 font-semibold whitespace-nowrap">{h}</th>
                           ))}
+                          <th className="px-2 py-3">Re-audit</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {results.map((r,i)=>(
-                          <tr key={i} className="hover:bg-slate-50">
-                            <td className="px-3 py-2.5 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
-                            <td className="px-3 py-2.5 text-slate-700">{String(r['Petitioner']||'').slice(0,16)}</td>
-                            <td className="px-3 py-2.5 text-slate-600">{shortDept(String(r['Department Name']||'')).slice(0,20)}</td>
-                            <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
-                            <td className="px-3 py-2.5 text-slate-500 max-w-[100px] truncate">{String(r['Grievance Type/குறையின் வகை']||'')}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                r['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':
-                                r['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'
-                              }`}>{String(r['Status Display'])}</span>
-                            </td>
-                            <td className="px-3 py-2.5 text-center text-slate-500">{r['Ticket Age in Days']??'—'}</td>
-                            <td className="px-3 py-2.5">
-                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${
-                                r.Audit_Grade==='A'?'bg-emerald-500':r.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
-                              }`}>{r.Audit_Grade}</span>
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                r.Audit_Status==='PASS'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'
-                              }`}>{r.Audit_Status}</span>
-                            </td>
-                            <td className="px-3 py-2.5 text-slate-600 max-w-[180px]">
-                              <span className="line-clamp-2" title={r.English_Analysis}>{r.English_Analysis}</span>
-                            </td>
-                            <td className="px-3 py-2.5 text-slate-500 max-w-[180px]">
-                              <span className="line-clamp-2" title={r.Required_Correction_Tamil}>{r.Required_Correction_Tamil}</span>
-                            </td>
-                          </tr>
-                        ))}
+                        {filteredResults.map((r) => {
+                          // find real index in results array
+                          const realIdx = results.indexOf(r);
+                          const isExpanded = expandedRows.has(realIdx);
+                          const isReauditing = reauditingIdx.has(realIdx);
+                          return (
+                            <React.Fragment key={`frag-${realIdx}`}>
+                              <tr className={`hover:bg-slate-50 ${isExpanded ? 'bg-slate-50' : ''}`}>
+                                <td className="px-2 py-2.5">
+                                  <button onClick={() => {
+                                    setExpandedRows(prev => {
+                                      const s = new Set(prev);
+                                      if (s.has(realIdx)) s.delete(realIdx); else s.add(realIdx);
+                                      return s;
+                                    });
+                                  }} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                    {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                                  </button>
+                                </td>
+                                <td className="px-3 py-2.5 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
+                                <td className="px-3 py-2.5 text-slate-700">{String(r['Petitioner']||'').slice(0,16)}</td>
+                                <td className="px-3 py-2.5 text-slate-600">{shortDept(String(r['Department Name']||'')).slice(0,20)}</td>
+                                <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    r['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':
+                                    r['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'
+                                  }`}>{String(r['Status Display'])}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-center text-slate-500">{r['Ticket Age in Days']??'—'}</td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${
+                                    r.Audit_Grade==='A'?'bg-emerald-500':r.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
+                                  }`}>{r.Audit_Grade}</span>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                    r.Audit_Status==='PASS'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'
+                                  }`}>{r.Audit_Status}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-600 max-w-[200px]">
+                                  <span className="line-clamp-2" title={r.English_Analysis}>{r.English_Analysis}</span>
+                                </td>
+                                <td className="px-2 py-2.5">
+                                  <button onClick={() => reauditRow(realIdx)} disabled={isReauditing}
+                                    className="text-slate-400 hover:text-indigo-600 transition-colors disabled:opacity-40">
+                                    {isReauditing ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>}
+                                  </button>
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr key={`expand-${realIdx}`}>
+                                  <td colSpan={11} className="px-4 py-0">
+                                    <div className="my-3 bg-indigo-50 border border-indigo-100 rounded-xl p-5 space-y-3">
+                                      <div className="flex items-center justify-between">
+                                        <p className="font-semibold text-indigo-800 text-sm">
+                                          {String(r['Grievance ID'])} — {String(r['Petitioner']||'')}
+                                        </p>
+                                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-white font-bold text-sm ${
+                                          r.Audit_Grade==='A'?'bg-emerald-500':r.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
+                                        }`}>{r.Audit_Grade}</span>
+                                      </div>
+                                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        <div>
+                                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Petition Details</p>
+                                          <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{String(r['Petition Details']||'—')}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Officer Reply</p>
+                                          <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{r._officer_reply || '—'}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">English Analysis</p>
+                                          <p className="text-xs text-slate-700 leading-relaxed">{r.English_Analysis || '—'}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Required Correction (Tamil)</p>
+                                          <p className="text-xs text-slate-700 leading-relaxed">{r.Required_Correction_Tamil || '—'}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -753,6 +969,20 @@ export default function Dashboard() {
           {/* ══════ INSIGHTS ══════ */}
           {section === 'insights' && metrics && (
             <div className="space-y-5">
+              {/* Department filter */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <select value={insightsDept} onChange={e=>setInsightsDept(e.target.value)}
+                  className="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  <option value="All">All Departments</option>
+                  {uniqueDepts.map(d=><option key={d} value={d}>{d}</option>)}
+                </select>
+                {insightsDept !== 'All' && (
+                  <span className="flex items-center gap-1.5 bg-indigo-100 text-indigo-700 text-xs px-3 py-1.5 rounded-full font-medium">
+                    Viewing: {shortDept(insightsDept)}
+                    <button onClick={()=>setInsightsDept('All')} className="hover:text-indigo-900"><X size={12}/></button>
+                  </span>
+                )}
+              </div>
 
               {/* KPI cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -808,20 +1038,20 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height={Math.max(200, metrics.deptRate.length * 36)}>
                   <BarChart data={metrics.deptRate} layout="vertical" barSize={20}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                    <XAxis type="number" domain={[0,100]} tickFormatter={v=>`${v}%`} tick={{fontSize:11}}/>
+                    <XAxis type="number" domain={[0,100]} tickFormatter={(v: number)=>`${v}%`} tick={{fontSize:11}}/>
                     <YAxis type="category" dataKey="dept" width={165} tick={{fontSize:10}}/>
-                    <Tooltip formatter={(v:number)=>`${v}%`}/>
+                    <Tooltip formatter={(v: number)=>`${v}%`}/>
                     <Bar dataKey="rate" radius={[0,5,5,0]}>
                       {metrics.deptRate.map(e=>(
                         <Cell key={e.dept} fill={e.rate>=70?'#22c55e':e.rate>=40?'#f59e0b':'#ef4444'}/>
                       ))}
-                      <LabelList dataKey="rate" position="right" formatter={(v:number)=>`${v}%`} style={{fontSize:10,fontWeight:600}}/>
+                      <LabelList dataKey="rate" position="right" formatter={(v: number)=>`${v}%`} style={{fontSize:10,fontWeight:600}}/>
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Taluk performance + Age distribution */}
+              {/* Taluk + Age */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <ChartCard title="Taluk Performance (Pass vs Fail)">
                   <BarChart data={metrics.talukPerf} barSize={30}>
@@ -830,7 +1060,7 @@ export default function Dashboard() {
                     <YAxis allowDecimals={false} tick={{fontSize:11}}/>
                     <Tooltip/>
                     <Legend wrapperStyle={{fontSize:11}}/>
-                    <Bar dataKey="pass" stackId="a" fill="#22c55e" name="Pass" radius={[0,0,0,0]}/>
+                    <Bar dataKey="pass" stackId="a" fill="#22c55e" name="Pass"/>
                     <Bar dataKey="fail" stackId="a" fill="#ef4444" name="Fail" radius={[4,4,0,0]}/>
                   </BarChart>
                 </ChartCard>
@@ -848,16 +1078,59 @@ export default function Dashboard() {
                 </ChartCard>
               </div>
 
+              {/* NEW: Days Pending vs Grade */}
+              <ChartCard title="Days Pending vs Grade (Stacked by Age Bucket)" height={260}>
+                <BarChart data={metrics.ageGradeData} barSize={44}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
+                  <XAxis dataKey="bucket" tick={{fontSize:11}}/>
+                  <YAxis allowDecimals={false} tick={{fontSize:11}}/>
+                  <Tooltip/>
+                  <Legend wrapperStyle={{fontSize:11}}/>
+                  <Bar dataKey="A" stackId="g" fill="#22c55e" name="Grade A"/>
+                  <Bar dataKey="C" stackId="g" fill="#f59e0b" name="Grade C"/>
+                  <Bar dataKey="F" stackId="g" fill="#ef4444" name="Grade F" radius={[4,4,0,0]}/>
+                </BarChart>
+              </ChartCard>
+
+              {/* NEW: Top 10 Pending Officers (F-grade) */}
+              <ChartCard title="Top 10 Officers with Most Grade F Cases" height={280}>
+                <BarChart data={metrics.topFailOfficers} layout="vertical" barSize={20}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
+                  <XAxis type="number" allowDecimals={false} tick={{fontSize:11}}/>
+                  <YAxis type="category" dataKey="officer" width={175} tick={{fontSize:10}}/>
+                  <Tooltip/>
+                  <Bar dataKey="fail" fill="#ef4444" name="Grade F Cases" radius={[0,5,5,0]}>
+                    <LabelList dataKey="fail" position="right" style={{fontSize:10,fontWeight:600}}/>
+                  </Bar>
+                </BarChart>
+              </ChartCard>
+
+              {/* NEW: Accepted vs Rejected reply quality */}
+              <ChartCard title="Reply Quality by Petition Status (Pass Rate %)" height={240}>
+                <BarChart data={metrics.accRej} barSize={44}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
+                  <XAxis dataKey="status" tick={{fontSize:11}}/>
+                  <YAxis domain={[0,100]} tickFormatter={(v: number)=>`${v}%`} tick={{fontSize:11}}/>
+                  <Tooltip formatter={(v: number)=>`${v}%`}/>
+                  <Bar dataKey="passRate" radius={[6,6,0,0]} name="Pass Rate">
+                    {metrics.accRej.map(e=>(
+                      <Cell key={e.status} fill={e.passRate>=70?'#22c55e':e.passRate>=40?'#f59e0b':'#ef4444'}/>
+                    ))}
+                    <LabelList dataKey="passRate" position="top" formatter={(v: number)=>`${v}%`} style={{fontSize:11,fontWeight:700}}/>
+                  </Bar>
+                </BarChart>
+              </ChartCard>
+
               {/* Grievance type F rate */}
               <ChartCard title="Grievance Types with Highest Failure Rate (min 5 petitions)" height={320}>
                 <BarChart data={metrics.typeRate} layout="vertical" barSize={18}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                  <XAxis type="number" domain={[0,100]} tickFormatter={v=>`${v}%`} tick={{fontSize:11}}/>
+                  <XAxis type="number" domain={[0,100]} tickFormatter={(v: number)=>`${v}%`} tick={{fontSize:11}}/>
                   <YAxis type="category" dataKey="type" width={200} tick={{fontSize:10}}/>
-                  <Tooltip formatter={(v:number)=>`${v}%`}/>
+                  <Tooltip formatter={(v: number)=>`${v}%`}/>
                   <Bar dataKey="fRate" radius={[0,5,5,0]}>
                     {metrics.typeRate.map(e=><Cell key={e.type} fill={e.fRate>=70?'#ef4444':e.fRate>=40?'#f59e0b':'#22c55e'}/>)}
-                    <LabelList dataKey="fRate" position="right" formatter={(v:number)=>`${v}%`} style={{fontSize:10,fontWeight:600}}/>
+                    <LabelList dataKey="fRate" position="right" formatter={(v: number)=>`${v}%`} style={{fontSize:10,fontWeight:600}}/>
                   </Bar>
                 </BarChart>
               </ChartCard>
@@ -902,12 +1175,197 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* ══════ ESCALATION ══════ */}
+          {section === 'escalation' && (
+            <div className="space-y-5">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 flex items-center gap-3">
+                  <AlertTriangle size={22} className="text-red-500"/>
+                  <div>
+                    <p className="font-bold text-red-700 text-xl">{escalated.length}</p>
+                    <p className="text-xs text-red-500">Escalated cases (Age ≥ 30 days + Grade F)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const cols = ['Grievance ID','Petitioner','Department Name','Responsible Officer/பொறுப்பு அதிகாரி','Taluk/வட்டம்','Ticket Age in Days','_officer_reply','Required_Correction_Tamil'] as const;
+                    const csv = '﻿' + [cols.join(','),...escalated.map(r=>cols.map(h=>`"${String(r[h as keyof AuditResult]??'').replace(/"/g,'""')}"`).join(','))].join('\n');
+                    const a = Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:'Escalated_Cases.csv'});
+                    a.click();
+                  }}
+                  className="flex items-center gap-2 bg-red-600 text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-red-700 transition-colors">
+                  <Download size={14}/> Export Escalation CSV
+                </button>
+                <button
+                  onClick={() => {
+                    const deptCounts: Record<string,number> = {};
+                    escalated.forEach(r => { const d = String(r['Department Name']||'?'); deptCounts[d]=(deptCounts[d]||0)+1; });
+                    const top = Object.entries(deptCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+                    const text = `🚨 MYD Escalation Alert\nTotal: ${escalated.length} cases require urgent action (Age ≥ 30 days + Grade F)\n\nTop Departments:\n${top.map(([d,c])=>`• ${d}: ${c}`).join('\n')}\n\nPlease take immediate action.`;
+                    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                  }}
+                  className="flex items-center gap-2 bg-emerald-600 text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-emerald-700 transition-colors">
+                  <MessageCircle size={14}/> Send WhatsApp Alert
+                </button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-red-50 text-red-700 uppercase text-left tracking-wide">
+                        {['ID','Petitioner','Department','Officer','Taluk','Age (Days)','Reply (truncated)','Tamil Correction'].map(h=>(
+                          <th key={h} className="px-3 py-3 font-semibold whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {escalated.map((r,i)=>(
+                        <tr key={i} className="hover:bg-red-50/30">
+                          <td className="px-3 py-2.5 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
+                          <td className="px-3 py-2.5 text-slate-700">{String(r['Petitioner']||'').slice(0,18)}</td>
+                          <td className="px-3 py-2.5 text-slate-600">{shortDept(String(r['Department Name']||''))}</td>
+                          <td className="px-3 py-2.5 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,22)}</td>
+                          <td className="px-3 py-2.5 text-slate-500">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{r['Ticket Age in Days']??'—'}</span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-600 max-w-[180px]">
+                            <span className="line-clamp-2">{r._officer_reply.slice(0,100) || '—'}</span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-500 max-w-[180px]">
+                            <span className="line-clamp-2">{r.Required_Correction_Tamil.slice(0,100) || '—'}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {escalated.length === 0 && (
+                  <div className="py-12 text-center text-slate-400 text-sm">
+                    <CheckCircle2 size={32} className="mx-auto mb-3 text-emerald-400"/>
+                    No escalated cases. All long-pending petitions have acceptable replies.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ══════ REPORTS ══════ */}
+          {section === 'reports' && (
+            <div className="space-y-5">
+              <div className="flex items-center gap-3">
+                <input type="text" value={reportSearch} onChange={e=>setReportSearch(e.target.value)}
+                  placeholder="Search officer name…"
+                  className="border border-slate-200 rounded-xl px-4 py-2 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                <span className="text-xs text-slate-400">{officerReportData.length} officers</span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                {officerReportData
+                  .filter(o => o.name.toLowerCase().includes(reportSearch.toLowerCase()))
+                  .map(o => (
+                    <div key={o.name} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="font-semibold text-slate-800 text-sm leading-tight">{o.name}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{o.total} total cases</p>
+                        </div>
+                        <span className={`text-sm font-bold px-2.5 py-1 rounded-xl ${
+                          o.failRate >= 70 ? 'bg-red-100 text-red-700' :
+                          o.failRate >= 40 ? 'bg-amber-100 text-amber-700' :
+                          'bg-emerald-100 text-emerald-700'
+                        }`}>{o.failRate}% fail</span>
+                      </div>
+                      <div className="flex gap-2 text-xs">
+                        <span className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg font-medium">A: {o.A}</span>
+                        <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-lg font-medium">C: {o.C}</span>
+                        <span className="bg-red-50 text-red-700 px-2 py-1 rounded-lg font-medium">F: {o.F}</span>
+                      </div>
+                      <div className="flex gap-3 text-xs text-slate-500">
+                        <span className="text-emerald-600 font-semibold">{o.pass} passed</span>
+                        <span className="text-red-500 font-semibold">{o.fail} failed</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${
+                          o.failRate>=70?'bg-red-500':o.failRate>=40?'bg-amber-500':'bg-emerald-500'
+                        }`} style={{width:`${100-o.failRate}%`}}/>
+                      </div>
+                      <button onClick={()=>setReportOfficer(o.name)}
+                        className="w-full text-xs bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200 rounded-lg py-1.5 font-medium transition-colors text-slate-600">
+                        View Details
+                      </button>
+                    </div>
+                  ))}
+              </div>
+
+              {/* Officer Detail Modal */}
+              {reportOfficer && (() => {
+                const officer = officerReportData.find(o=>o.name===reportOfficer);
+                if (!officer) return null;
+                return (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={()=>setReportOfficer(null)}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col mx-4" onClick={e=>e.stopPropagation()}>
+                      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                        <div>
+                          <p className="font-bold text-slate-800">{officer.name}</p>
+                          <p className="text-xs text-slate-400">{officer.total} cases · {officer.failRate}% fail rate</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={()=>window.print()}
+                            className="flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors text-slate-700">
+                            <Printer size={13}/> Print
+                          </button>
+                          <button onClick={()=>setReportOfficer(null)} className="text-slate-400 hover:text-slate-700">
+                            <X size={18}/>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="overflow-auto flex-1 px-6 py-4">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide">
+                              {['ID','Grade','Status','Age','Reply Snippet'].map(h=>(
+                                <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {officer.cases.map((c,i)=>(
+                              <tr key={i} className="hover:bg-slate-50">
+                                <td className="px-3 py-2.5 font-mono text-slate-500">{String(c['Grievance ID']).slice(-10)}</td>
+                                <td className="px-3 py-2.5">
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${
+                                    c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'
+                                  }`}>{c.Audit_Grade}</span>
+                                </td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':
+                                    c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'
+                                  }`}>{String(c['Status Display'])}</span>
+                                </td>
+                                <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
+                                <td className="px-3 py-2.5 text-slate-600 max-w-[280px]">
+                                  <span className="line-clamp-2">{c._officer_reply.slice(0,100) || '—'}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* ══════ EXPORT ══════ */}
           {section === 'export' && (
             <div className="max-w-xl space-y-4">
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
                 <h2 className="font-semibold text-slate-800">Export Options</h2>
-
                 <div className="space-y-3">
                   {results.length > 0 && (
                     <button onClick={downloadCSV}
@@ -939,6 +1397,31 @@ export default function Dashboard() {
                       <p className="text-xs text-slate-500">{rows.length.toLocaleString()} rows · original upload (slim columns)</p>
                     </div>
                   </button>
+
+                  {/* WhatsApp Weekly Summary */}
+                  {results.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const total = results.length;
+                        const passed = results.filter(r=>r.Audit_Status==='PASS').length;
+                        const failed = total - passed;
+                        const passRate = Math.round((passed/total)*100);
+                        const deptFail: Record<string,number> = {};
+                        results.forEach(r=>{if(r.Audit_Status==='FAIL'){const d=String(r['Department Name']||'?');deptFail[d]=(deptFail[d]||0)+1;}});
+                        const worst = Object.entries(deptFail).sort((a,b)=>b[1]-a[1]).slice(0,5);
+                        const text = `📊 MYD Grievance Audit — Weekly Summary\n\n✅ Total Audited: ${total}\n✔️ Passed: ${passed} (${passRate}%)\n❌ Failed: ${failed} (${100-passRate}%)\n🚨 Escalated (Age ≥ 30 + Grade F): ${escalated.length}\n\n🏚️ Worst Departments:\n${worst.map(([d,c])=>`• ${d}: ${c} failures`).join('\n')}\n\nPlease review and take action.`;
+                        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                      }}
+                      className="w-full flex items-center gap-3 p-4 border border-slate-200 rounded-xl hover:border-emerald-300 hover:bg-emerald-50/30 transition-colors text-left">
+                      <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center shrink-0">
+                        <MessageCircle size={18} className="text-emerald-600"/>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-slate-800 text-sm">Share via WhatsApp</p>
+                        <p className="text-xs text-slate-500">Weekly summary with pass/fail counts and worst departments</p>
+                      </div>
+                    </button>
+                  )}
                 </div>
               </div>
 
