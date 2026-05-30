@@ -54,9 +54,10 @@ function slimRow(r: GrievanceRow): GrievanceRow {
 function slimResult(r: AuditResult): AuditResult {
   return {
     ...r,
-    English_Analysis:        String(r.English_Analysis        || '').slice(0, 220),
+    _officer_reply:            String(r._officer_reply            || '').slice(0, 300),
+    English_Analysis:          String(r.English_Analysis          || '').slice(0, 220),
     Required_Correction_Tamil: String(r.Required_Correction_Tamil || '').slice(0, 220),
-    'Petition Details':      String(r['Petition Details']      || '').slice(0, 120),
+    'Petition Details':        String(r['Petition Details']       || '').slice(0, 120),
   };
 }
 
@@ -221,17 +222,20 @@ export default function Dashboard() {
     if (!cloudOk) setSaveErr(true);
   }, []);
 
-  const saveResultsNow = useCallback(async (list: AuditResult[], fname: string) => {
+  const saveResultsNow = useCallback(async (list: AuditResult[], fname: string): Promise<boolean> => {
+    // 1. localStorage first (instant, never fails silently)
     const slim = list.map(slimResult);
-    const ok = lsSave(SK_RESULTS, slim);
-    setSaveErr(!ok);
+    lsSave(SK_RESULTS, slim);
     const ts = new Date().toLocaleString('en-IN');
     setSavedAt(ts);
     lsSave(SK_META, { file: fname, savedAt: ts });
+
+    // 2. Firestore (full data, not slimmed)
     setCloudStatus('saving');
     const cloudOk = await fsSaveResults(list, fname);
+    setSaveErr(!cloudOk);
     setCloudStatus(cloudOk ? 'saved' : 'error');
-    if (!cloudOk) setSaveErr(true);
+    return cloudOk;
   }, []);
 
   const clearAll = useCallback(async () => {
@@ -322,7 +326,15 @@ export default function Dashboard() {
     }
 
     setResults([...collected]);
-    saveResultsNow(collected, fileName);
+
+    // Await save so we know it actually completed before leaving audit section
+    const saved = await saveResultsNow(collected, fileName);
+    if (!saved) {
+      // Firestore failed — retry once after 2 s
+      await new Promise(r => setTimeout(r, 2000));
+      await saveResultsNow(collected, fileName);
+    }
+
     setProcessing(false); setSection('insights');
   }, [rows, apiKey, processing, saveResultsNow, fileName]);
 
@@ -357,12 +369,11 @@ export default function Dashboard() {
         English_Analysis: d.Audit_Reason_EN || '',
         Required_Correction_Tamil: d.Fix_Action_TA || '',
       };
-      setResults(prev => {
-        const next = [...prev];
-        next[idx] = updated;
-        saveResultsNow(next, fileName);
-        return next;
-      });
+      // Build the new list outside the state setter, then save it
+      const next = [...results];
+      next[idx] = updated;
+      setResults(next);
+      await saveResultsNow(next, fileName);
     } catch { /* keep old */ }
     finally {
       setReauditingIdx(prev => { const s = new Set(prev); s.delete(idx); return s; });
@@ -859,12 +870,35 @@ export default function Dashboard() {
               {processing && (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                   <div className="flex justify-between text-xs text-slate-500 mb-2">
-                    <span>Processing {processed.toLocaleString()} of {rows.length.toLocaleString()} petitions…</span>
+                    <span>
+                      {progressPct === 100 && cloudStatus === 'saving'
+                        ? '✅ Audit complete — saving to Firebase…'
+                        : `Processing ${processed.toLocaleString()} of ${rows.length.toLocaleString()} petitions…`}
+                    </span>
                     <span className="font-bold text-indigo-600">{progressPct}%</span>
                   </div>
                   <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-600 rounded-full transition-all duration-300" style={{width:`${progressPct}%`}}/>
+                    <div className={`h-full rounded-full transition-all duration-300 ${
+                      progressPct === 100 && cloudStatus === 'saving' ? 'bg-emerald-500' : 'bg-indigo-600'
+                    }`} style={{width:`${progressPct}%`}}/>
                   </div>
+                </div>
+              )}
+
+              {/* Firebase save status banner */}
+              {!processing && results.length > 0 && (
+                <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium ${
+                  cloudStatus === 'saved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : cloudStatus === 'saving' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                  : cloudStatus === 'error' ? 'bg-red-50 text-red-700 border border-red-200'
+                  : 'hidden'
+                }`}>
+                  {cloudStatus === 'saving' && <Loader2 size={14} className="animate-spin"/>}
+                  {cloudStatus === 'saved'  && <CheckCircle2 size={14}/>}
+                  {cloudStatus === 'error'  && <AlertCircle size={14}/>}
+                  {cloudStatus === 'saving' && 'Saving audit results to Firebase…'}
+                  {cloudStatus === 'saved'  && `${results.length.toLocaleString()} audit results saved to Firebase ✓`}
+                  {cloudStatus === 'error'  && 'Firebase save failed — results are in localStorage. Check Firestore rules.'}
                 </div>
               )}
 
