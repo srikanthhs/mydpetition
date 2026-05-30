@@ -1580,7 +1580,7 @@ export default function Dashboard() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-red-50 text-red-700 uppercase tracking-wide">
-                          {['Grievance ID','Petitioner','Department','Officer','Taluk','Age (Days)','Required Action (Tamil)'].map(h=>(
+                          {['Grievance ID','Petitioner','Department','Officer','Taluk','Age','Request Made','Reply Given','Required Action (Tamil)'].map(h=>(
                             <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -1589,12 +1589,14 @@ export default function Dashboard() {
                         {escalated.slice(0,20).map((r,i)=>(
                           <tr key={i} className="hover:bg-red-50/30">
                             <td className="px-3 py-2 font-mono text-slate-500">{String(r['Grievance ID']).slice(-10)}</td>
-                            <td className="px-3 py-2 text-slate-700">{String(r['Petitioner']||'').slice(0,18)}</td>
+                            <td className="px-3 py-2 text-slate-700">{String(r['Petitioner']||'').slice(0,16)}</td>
                             <td className="px-3 py-2 text-slate-600">{shortDept(String(r['Department Name']||''))}</td>
-                            <td className="px-3 py-2 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,20)}</td>
-                            <td className="px-3 py-2 text-slate-500">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
+                            <td className="px-3 py-2 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,18)}</td>
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
                             <td className="px-3 py-2 text-center"><span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{r['Ticket Age in Days']}</span></td>
-                            <td className="px-3 py-2 text-slate-500 max-w-[220px]"><span className="line-clamp-2">{r.Required_Correction_Tamil||'—'}</span></td>
+                            <td className="px-3 py-2 text-slate-700 max-w-[200px]"><span className="line-clamp-3 text-xs leading-relaxed" title={String(r['Petition Details']||'')}>{String(r['Petition Details']||'—')}</span></td>
+                            <td className="px-3 py-2 text-slate-600 max-w-[200px]"><span className="line-clamp-3 text-xs leading-relaxed" title={r._officer_reply}>{r._officer_reply||<span className="italic text-red-400">No reply given</span>}</span></td>
+                            <td className="px-3 py-2 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs">{r.Required_Correction_Tamil||'—'}</span></td>
                           </tr>
                         ))}
                       </tbody>
@@ -1628,7 +1630,7 @@ export default function Dashboard() {
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="bg-slate-50 text-slate-500 uppercase tracking-wide sticky top-0">
-                              {['Grievance ID','Petitioner','Taluk','Type','Age','Grade','Status','Officer Reply','Tamil Correction'].map(h=>(
+                              {['ID','Petitioner','Taluk','Age','Grade','Status','Request Made','Reply Given','AI Analysis','Tamil Correction'].map(h=>(
                                 <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{h}</th>
                               ))}
                             </tr>
@@ -1636,10 +1638,9 @@ export default function Dashboard() {
                           <tbody className="divide-y divide-slate-100">
                             {officer.cases.map((c,i)=>(
                               <tr key={i} className={`hover:bg-slate-50 ${c.Audit_Grade==='F'?'bg-red-50/30':''}`}>
-                                <td className="px-3 py-2.5 font-mono text-slate-500">{String(c['Grievance ID']).slice(-10)}</td>
-                                <td className="px-3 py-2.5 text-slate-700">{String(c['Petitioner']||'').slice(0,16)}</td>
+                                <td className="px-3 py-2.5 font-mono text-slate-500 whitespace-nowrap">{String(c['Grievance ID']).slice(-10)}</td>
+                                <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{String(c['Petitioner']||'').slice(0,16)}</td>
                                 <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{shortTaluk(String(c['Taluk/வட்டம்']||''))}</td>
-                                <td className="px-3 py-2.5 text-slate-500 max-w-[80px] truncate">{String(c['Grievance Type/குறையின் வகை']||'').slice(0,20)}</td>
                                 <td className="px-3 py-2.5 text-center text-slate-500">{c['Ticket Age in Days']??'—'}</td>
                                 <td className="px-3 py-2.5">
                                   <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-white font-bold text-xs ${c.Audit_Grade==='A'?'bg-emerald-500':c.Audit_Grade==='C'?'bg-amber-500':'bg-red-500'}`}>{c.Audit_Grade}</span>
@@ -1647,8 +1648,18 @@ export default function Dashboard() {
                                 <td className="px-3 py-2.5 whitespace-nowrap">
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{String(c['Status Display'])}</span>
                                 </td>
-                                <td className="px-3 py-2.5 text-slate-600 max-w-[180px]"><span className="line-clamp-2" title={c._officer_reply}>{c._officer_reply||'—'}</span></td>
-                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2" title={c.Required_Correction_Tamil}>{c.Required_Correction_Tamil||'—'}</span></td>
+                                {/* Request Made — full citizen grievance */}
+                                <td className="px-3 py-2.5 max-w-[220px]">
+                                  <span className="line-clamp-3 text-xs text-slate-700 leading-relaxed" title={String(c['Petition Details']||'')}>{String(c['Petition Details']||'—')}</span>
+                                </td>
+                                {/* Reply Given — officer's actual response */}
+                                <td className="px-3 py-2.5 max-w-[220px]">
+                                  {c._officer_reply
+                                    ? <span className="line-clamp-3 text-xs text-slate-600 leading-relaxed" title={c._officer_reply}>{c._officer_reply}</span>
+                                    : <span className="text-xs italic text-red-400">No reply given</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs" title={c.English_Analysis}>{c.English_Analysis||'—'}</span></td>
+                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs" title={c.Required_Correction_Tamil}>{c.Required_Correction_Tamil||'—'}</span></td>
                               </tr>
                             ))}
                           </tbody>
