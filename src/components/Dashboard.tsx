@@ -15,9 +15,14 @@ import {
 /* ══════════════════════════════════════════════
    STORAGE
 ══════════════════════════════════════════════ */
-const SK_ROWS    = 'myd_rows_v3';
-const SK_RESULTS = 'myd_results_v3';
-const SK_META    = 'myd_meta_v3';
+const SK_ROWS    = 'myd_rows_v4';
+const SK_RESULTS = 'myd_results_v4';
+const SK_META    = 'myd_meta_v4';
+
+// purge old keys so they don't waste quota
+if (typeof window !== 'undefined') {
+  ['myd_rows_v3','myd_results_v3','myd_meta_v3'].forEach(k => localStorage.removeItem(k));
+}
 
 const SLIM_COLS = [
   'Grievance ID','Petitioner','Department Name',
@@ -34,8 +39,25 @@ function slimRow(r: GrievanceRow): GrievanceRow {
   SLIM_COLS.forEach(k => { o[k] = r[k] ?? ''; });
   return o as GrievanceRow;
 }
-function lsSave(k: string, v: unknown) {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+
+/* Trim long Gemini text so results fit in localStorage (5 MB limit) */
+function slimResult(r: AuditResult): AuditResult {
+  return {
+    ...r,
+    English_Analysis:        String(r.English_Analysis        || '').slice(0, 220),
+    Required_Correction_Tamil: String(r.Required_Correction_Tamil || '').slice(0, 220),
+    'Petition Details':      String(r['Petition Details']      || '').slice(0, 120),
+  };
+}
+
+/* Returns true on success, false if quota exceeded */
+function lsSave(k: string, v: unknown): boolean {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+    return true;
+  } catch {
+    return false;
+  }
 }
 function lsLoad<T>(k: string): T | null {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as T : null; } catch { return null; }
@@ -79,6 +101,7 @@ export default function Dashboard() {
   const [fileErr,    setFileErr]    = useState('');
   const [fileName,   setFileName]   = useState('');
   const [savedAt,    setSavedAt]    = useState<string|null>(null);
+  const [saveErr,    setSaveErr]    = useState(false);
   const [section,    setSection]    = useState<Section>('upload');
 
   /* ── Restore from localStorage on mount ── */
@@ -94,20 +117,27 @@ export default function Dashboard() {
   /* ── Persist rows ── */
   useEffect(() => {
     if (!rows.length) return;
-    lsSave(SK_ROWS, rows);
-    const ts = new Date().toLocaleString('en-IN');
-    setSavedAt(ts);
-    lsSave(SK_META, { file: fileName, savedAt: ts });
+    const ok = lsSave(SK_ROWS, rows);
+    setSaveErr(!ok);
+    if (ok) {
+      const ts = new Date().toLocaleString('en-IN');
+      setSavedAt(ts);
+      lsSave(SK_META, { file: fileName, savedAt: ts });
+    }
   }, [rows, fileName]);
 
-  /* ── Persist results ── */
-  useEffect(() => {
-    if (!results.length) return;
-    lsSave(SK_RESULTS, results);
-    const ts = new Date().toLocaleString('en-IN');
-    setSavedAt(ts);
-    lsSave(SK_META, { file: fileName, savedAt: ts });
-  }, [results, fileName]);
+  /* ── Persist results (only when not mid-audit to avoid 1927 writes) ── */
+  const saveResultsNow = useCallback((list: AuditResult[], fname: string) => {
+    const slim = list.map(slimResult);
+    const ok = lsSave(SK_RESULTS, slim);
+    setSaveErr(!ok);
+    if (ok) {
+      const ts = new Date().toLocaleString('en-IN');
+      setSavedAt(ts);
+      lsSave(SK_META, { file: fname, savedAt: ts });
+    }
+    return ok;
+  }, []);
 
   /* ── Clear everything ── */
   const clearAll = useCallback(() => {
@@ -145,7 +175,9 @@ export default function Dashboard() {
   /* ── Run audit ── */
   const startAudit = useCallback(async () => {
     if (!rows.length || processing) return;
-    setProcessing(true); setResults([]); setProcessed(0);
+    setProcessing(true); setResults([]); setProcessed(0); setSaveErr(false);
+    const collected: AuditResult[] = [];
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       try {
@@ -167,25 +199,31 @@ export default function Dashboard() {
           }),
         });
         const d = await res.json();
-        setResults(p => [...p, {
+        collected.push({
           ...row, _officer_reply: getReply(row),
           Audit_Grade: d.Grade || 'F',
           Audit_Status: d.Status || 'FAIL',
           English_Analysis: d.Audit_Reason_EN || '',
           Required_Correction_Tamil: d.Fix_Action_TA || '',
-        }]);
+        });
       } catch {
-        setResults(p => [...p, {
+        collected.push({
           ...row, _officer_reply: getReply(row),
           Audit_Grade: 'F', Audit_Status: 'FAIL',
           English_Analysis: 'Network error.',
           Required_Correction_Tamil: 'பிழை ஏற்பட்டது.',
-        }]);
+        });
       }
       setProcessed(i + 1);
+      /* Update UI every 25 rows so table is live, but don't thrash localStorage */
+      if ((i + 1) % 25 === 0) setResults([...collected]);
     }
+
+    /* Final state + single localStorage write */
+    setResults([...collected]);
+    saveResultsNow(collected, fileName);
     setProcessing(false); setSection('insights');
-  }, [rows, apiKey, processing]);
+  }, [rows, apiKey, processing, saveResultsNow, fileName]);
 
   /* ── CSV download ── */
   const downloadCSV = useCallback(() => {
@@ -383,11 +421,16 @@ export default function Dashboard() {
 
         {/* Footer */}
         <div className="px-4 py-4 border-t border-slate-100 space-y-2">
-          {savedAt && (
-            <div className="flex items-center gap-1.5 text-xs text-emerald-600">
-              <Save size={11}/> Saved {savedAt}
+          {saveErr ? (
+            <div className="flex items-start gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 leading-tight">
+              <AlertCircle size={11} className="mt-0.5 shrink-0"/>
+              <span>Storage full — data <strong>not saved</strong>. Export CSV now.</span>
             </div>
-          )}
+          ) : savedAt ? (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+              <CheckCircle2 size={11}/> Saved {savedAt}
+            </div>
+          ) : null}
           {rows.length > 0 && (
             <button onClick={clearAll}
               className="w-full flex items-center gap-2 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg transition-colors">
