@@ -1363,11 +1363,11 @@ export default function Dashboard() {
                           <td className="px-3 py-2.5 text-center">
                             <span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{r['Ticket Age in Days']??'—'}</span>
                           </td>
-                          <td className="px-3 py-2.5 text-slate-600 max-w-[180px]">
-                            <span className="line-clamp-2">{r._officer_reply.slice(0,100) || '—'}</span>
+                          <td className="px-3 py-2.5 w-64">
+                            <div className="max-h-28 overflow-y-auto text-xs text-slate-600 leading-relaxed whitespace-pre-wrap pr-1">{r._officer_reply || '—'}</div>
                           </td>
-                          <td className="px-3 py-2.5 text-slate-500 max-w-[180px]">
-                            <span className="line-clamp-2">{r.Required_Correction_Tamil.slice(0,100) || '—'}</span>
+                          <td className="px-3 py-2.5 w-52">
+                            <div className="max-h-28 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1">{r.Required_Correction_Tamil || '—'}</div>
                           </td>
                         </tr>
                       ))}
@@ -1606,9 +1606,9 @@ export default function Dashboard() {
                             <td className="px-3 py-2 text-slate-600">{String(r['Responsible Officer/பொறுப்பு அதிகாரி']||'—').slice(0,18)}</td>
                             <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{shortTaluk(String(r['Taluk/வட்டம்']||''))}</td>
                             <td className="px-3 py-2 text-center"><span className="bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{r['Ticket Age in Days']}</span></td>
-                            <td className="px-3 py-2 text-slate-700 max-w-[200px]"><span className="line-clamp-3 text-xs leading-relaxed" title={String(r['Petition Details']||'')}>{String(r['Petition Details']||'—')}</span></td>
-                            <td className="px-3 py-2 text-slate-600 max-w-[200px]"><span className="line-clamp-3 text-xs leading-relaxed" title={r._officer_reply}>{r._officer_reply||<span className="italic text-red-400">No reply given</span>}</span></td>
-                            <td className="px-3 py-2 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs">{r.Required_Correction_Tamil||'—'}</span></td>
+                            <td className="px-3 py-2 w-64"><div className="max-h-32 overflow-y-auto text-xs text-slate-700 leading-relaxed whitespace-pre-wrap pr-1">{String(r['Petition Details']||'—')}</div></td>
+                            <td className="px-3 py-2 w-64"><div className="max-h-32 overflow-y-auto text-xs leading-relaxed whitespace-pre-wrap pr-1">{r._officer_reply ? <span className="text-slate-600">{r._officer_reply}</span> : <span className="italic text-red-400">No reply given</span>}</div></td>
+                            <td className="px-3 py-2 w-52"><div className="max-h-32 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1">{r.Required_Correction_Tamil||'—'}</div></td>
                           </tr>
                         ))}
                       </tbody>
@@ -1665,18 +1665,30 @@ export default function Dashboard() {
                                 <td className="px-3 py-2.5 whitespace-nowrap">
                                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${c['Status Display']==='Accepted'?'bg-emerald-100 text-emerald-700':c['Status Display']==='Rejected'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{String(c['Status Display'])}</span>
                                 </td>
-                                {/* Request Made — full citizen grievance */}
-                                <td className="px-3 py-2.5 max-w-[220px]">
-                                  <span className="line-clamp-3 text-xs text-slate-700 leading-relaxed" title={String(c['Petition Details']||'')}>{String(c['Petition Details']||'—')}</span>
+                                {/* Request Made — fully readable */}
+                                <td className="px-3 py-2.5 w-64">
+                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-700 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
+                                    {String(c['Petition Details']||'—')}
+                                  </div>
                                 </td>
-                                {/* Reply Given — officer's actual response */}
-                                <td className="px-3 py-2.5 max-w-[220px]">
-                                  {c._officer_reply
-                                    ? <span className="line-clamp-3 text-xs text-slate-600 leading-relaxed" title={c._officer_reply}>{c._officer_reply}</span>
-                                    : <span className="text-xs italic text-red-400">No reply given</span>}
+                                {/* Reply Given — fully readable */}
+                                <td className="px-3 py-2.5 w-64">
+                                  <div className="max-h-36 overflow-y-auto text-xs leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
+                                    {c._officer_reply
+                                      ? <span className="text-slate-600">{c._officer_reply}</span>
+                                      : <span className="italic text-red-400">No reply given</span>}
+                                  </div>
                                 </td>
-                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs" title={c.English_Analysis}>{c.English_Analysis||'—'}</span></td>
-                                <td className="px-3 py-2.5 text-slate-500 max-w-[180px]"><span className="line-clamp-2 text-xs" title={c.Required_Correction_Tamil}>{c.Required_Correction_Tamil||'—'}</span></td>
+                                <td className="px-3 py-2.5 w-52">
+                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
+                                    {c.English_Analysis||'—'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 w-52">
+                                  <div className="max-h-36 overflow-y-auto text-xs text-slate-500 leading-relaxed whitespace-pre-wrap pr-1 scrollbar-thin">
+                                    {c.Required_Correction_Tamil||'—'}
+                                  </div>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
